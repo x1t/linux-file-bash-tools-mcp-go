@@ -1,0 +1,144 @@
+# Go 编译产物和模块缓存
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+mcp-server
+mcp-server.exe
+mcp-server-linux
+mcp-server-linux-arm64
+mcp-server-current
+
+# Go module cache
+go.sum
+
+# 构建输出目录
+# Build output directories
+dist/
+build/
+
+# IDE 和编辑器配置
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统生成的文件
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 临时文件
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# 测试覆盖率文件
+# Test coverage files
+*.out
+coverage.txt
+coverage.html
+
+# 性能分析文件
+# Profiling files
+*.prof
+*.pprof
+
+# 环境变量文件
+# Environment files
+.env
+.env.local
+.env.production
+.env.development
+
+# 调试文件
+# Debug files
+debug
+debug.test
+
+# 本地配置文件
+# Local configuration files
+config.local.*
+*.local
+
+# 备份文件
+# Backup files
+*.bak
+*.backup
+
+# 压缩文件
+# Archive files
+*.tar
+*.tar.gz
+*.zip
+*.rar
+
+# 证书和密钥文件
+# Certificate and key files
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# 运行时文件
+# Runtime files
+*.pid
+*.seed
+*.pid.lock
+
+# 错误报告文件
+# Crash reports
+*.crash
+
+# 依赖管理
+# Dependency management
+vendor/
+
+# Docker 相关文件
+# Docker related files
+Dockerfile.local
+docker-compose.local.yml
+.dockerignore
+
+# 本地数据库
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# 缓存目录
+# Cache directories
+.cache/
+.npm/
+.yarn/
+pnpm-lock.yaml.backup
+
+# 文档生成
+# Documentation generation
+docs/_build/
+site/
+
+# 配置文件（敏感）
+# Sensitive configuration files
+secrets.json
+credentials.json
+tokens.json
+
+# 系统信息文件
+# System information files
+.system/
+.system_info
