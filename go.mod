@@ -2,7 +2,7 @@
 // 不支持Windows和macOS，专注Linux发行版优化
 module mcp-file-tools
 
-go 1.25.3
+go 1.23.0
 
 // 必需的MCP SDK依赖
 require github.com/modelcontextprotocol/go-sdk v1.1.0
