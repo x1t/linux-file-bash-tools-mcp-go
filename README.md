@@ -1,50 +1,84 @@
-# 🚀 MCP 文件操作与系统命令工具服务器
+# 📦 File-Bash-Tools Linux
 
-一个功能完整、企业级的 MCP（Model Context Protocol）服务器，为 AI 应用提供强大的文件操作和系统命令执行能力，完美适配 Linux 生态系统！💪
+<div align="center">
 
-[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](https://golang.org/dl/)
-[![MCP Protocol](https://img.shields.io/badge/MCP-2025-blue?style=flat-square)](https://modelcontextprotocol.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/Platform-Linux-lightgrey?style=flat-square&logo=linux)](https://www.linux.org/)
+![Go Version](https://img.shields.io/badge/Go-1.23.0+-00ADD8?style=for-the-badge&logo=go&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)
+![Test Coverage](https://img.shields.io/badge/Test%20Coverage-86%2B-brightgreen?style=for-the-badge)
+![Platform](https://img.shields.io/badge/Platform-Linux-lightgrey?style=for-the-badge&logo=linux&logoColor=white)
+
+一个强大的 **MCP（Model Context Protocol）** 工具集，专为文件操作和bash命令执行而设计！🚀
+
+[✨ 特性](#-特性) • [🛠️ 功能列表](#️-功能列表) • [🚀 快速开始](#-快速开始) • [📋 项目结构](#-项目结构) • [🧪 测试](#-测试) • [🔒 安全](#-安全) • [🤝 贡献](#-贡献)
+
+</div>
 
 ---
 
-## ✨ 核心特性
+## ✨ 特性
 
-### 📁 文件操作工具套件
+| 特性                       | 描述                                             |
+| -------------------------- | ------------------------------------------------ |
+| 🗂️**文件操作工具** | 读取、写入、编辑文件，支持行范围选择、偏移和限制 |
+| 🔍**搜索工具**       | glob模式匹配和grep文本搜索功能，支持高级通配符   |
+| 💻**Bash命令执行**   | 支持同步和后台执行，带超时控制和进程管理         |
+| ⚡**进程管理**       | 后台进程输出获取和优雅终止功能                   |
+| 📝**待办事项管理**   | 任务状态跟踪工具，支持多种状态                   |
+| ✅**高测试覆盖率**   | 超过**86%** 的代码覆盖率，确保可靠性 🛡️  |
+| 🔒**安全加固**       | 路径验证、超时保护、UTF-8编码验证                |
 
-我们的文件工具套件提供了企业级的文件管理能力，让 AI 能够安全、高效地操作文件系统！
+---
 
-| 工具 | 功能描述 | 特色能力 |
-|------|---------|---------|
-| **read_file** 📖 | 读取文件内容 | ✅ 支持行范围选择 (`start:end`)<br>✅ 支持相对行号 (`-10:-1`)<br>✅ 大文件优化处理 |
-| **write_file** ✍️ | 写入内容到文件 | ✅ 自动创建目录结构<br>✅ 原子性写入保证数据安全<br>✅ 支持覆盖和追加模式 |
-| **edit_file** 🔧 | 编辑文件内容 | ✅ 精确的行范围替换<br>✅ 批量编辑支持<br>✅ 变更预览机制 |
-| **glob** 🔍 | 文件模式匹配 | ✅ 通配符支持 (`*`, `**`, `?`)<br>✅ 递归目录搜索<br>✅ 过滤条件支持 |
-| **grep** 🎯 | 智能文本搜索 | ✅ 正则表达式支持<br>✅ 大小写敏感/不敏感<br>✅ 多线程并行搜索<br>✅ 行号和上下文显示 |
+## 🛠️ 功能列表
 
-### 🐚 系统命令工具集
+### 1️⃣ Bash 工具 💻
 
-强大的 shell 命令执行能力，支持同步、异步及后台进程管理！
+| 工具            | 功能                           | 示例                                                                           |
+| --------------- | ------------------------------ | ------------------------------------------------------------------------------ |
+| `bash`        | 执行shell命令，支持后台执行    | `file-bash-tools.bash` (command: `"ls -la"`, run_in_background: `false`) |
+| `bash_output` | 获取后台进程输出，支持正则过滤 | `file-bash-tools.bash_output` (bash_id: `"12345"`, filter: `"error"`)    |
+| `kill_shell`  | 终止后台进程（优雅终止）       | `file-bash-tools.kill_shell` (shell_id: `"12345"`)                         |
 
-| 工具 | 功能描述 | 核心优势 |
-|------|---------|---------|
-| **bash** ⚡ | 执行 Shell 命令 | ✅ 同步/异步执行模式<br>✅ 超时控制机制<br>✅ 环境变量自定义<br>✅ 工作目录指定 |
-| **bash_output** 📊 | 获取后台进程输出 | ✅ 实时 stdout/stderr 捕获<br>✅ 增量输出读取<br>✅ 进程状态监控 |
-| **kill_shell** 🛑 | 终止后台进程 | ✅ 优雅中断 (SIGINT)<br>✅ 强制终止 (SIGKILL)<br>✅ 自动资源清理 |
+#### 💡 Bash 工具亮点
 
-### 🌐 Web 工具集 (可选)
+- ⏱️ **超时控制**: 默认30秒，可配置最大600秒
+- 🔄 **后台执行**: 支持长时间运行命令
+- 🛡️ **内存保护**: 100KB输出缓冲区，防止内存泄漏
+- 🎯 **进程跟踪**: 自动清理完成的进程
 
-| 工具 | 功能描述 |
-|------|---------|
-| **web_search** 🔎 | 互联网搜索，支持域名过滤 |
-| **web_fetch** 🌐 | URL 内容获取与 AI 智能处理 |
+---
 
-### ✅ Todo 工具
+### 2️⃣ 文件 工具 🗂️
 
-| 工具 | 功能描述 |
-|------|---------|
-| **todo_write** 📝 | 创建和管理任务列表，支持状态跟踪 |
+| 工具           | 功能                         | 示例                                                                                                                   |
+| -------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `read_file`  | 读取文件内容，支持指定行范围 | `file-bash-tools.read_file` (file_path: `"/path/to/file.txt"`)                                                     |
+| `write_file` | 写入内容到文件（完全覆盖）   | `file-bash-tools.write_file` (file_path: `"/path/to/file.txt"`, content: `"内容"`)                               |
+| `edit_file`  | 编辑文件内容（字符串替换）   | `file-bash-tools.edit_file` (file_path: `"/path/to/file.txt"`, old_string: `"旧文本"`, new_string: `"新文本"`) |
+| `glob`       | 根据模式匹配文件路径         | `file-bash-tools.glob` (pattern: `"**/*.go"`)                                                                      |
+| `grep`       | 在文件或目录中搜索文本内容   | `file-bash-tools.grep` (pattern: `"func"`, path: `"/src"`)                                                       |
+
+#### 🌟 文件工具特色
+
+- 📍 **绝对路径**: 所有操作需要绝对路径，安全可靠
+- 🎨 **高级通配符**: 支持 `*` 和 `**` 模式（基于doublestar/v4）
+- 📊 **分页支持**: `head_limit` 和 `offset` 参数
+- 🔤 **编码验证**: 自动验证UTF-8编码
+- 📝 **行号显示**: 可选显示行号（默认开启）
+
+---
+
+### 3️⃣ 任务管理 工具 📝
+
+| 工具           | 功能                       | 示例                                                                               |
+| -------------- | -------------------------- | ---------------------------------------------------------------------------------- |
+| `todo_write` | 更新待办事项列表，状态管理 | `file-bash-tools.todo_write` (todos: `[{content: "任务", status: "pending"}]`) |
+
+#### 📋 Todo 工具支持的状态
+
+- `pending` - 待处理
+- `in_progress` - 进行中
+- `completed` - 已完成
 
 ---
 
@@ -52,565 +86,308 @@
 
 ### 📋 前置要求
 
-在开始之前，请确保您的环境满足以下要求：
+| 依赖     | 版本要求                       |
+| -------- | ------------------------------ |
+| Go       | 1.23.0+                        |
+| 操作系统 | Linux (Alpine, Debian, Ubuntu) |
+| MCP SDK  | v1.1.0                         |
 
-- **Go 版本**: 1.23 或更高版本 [📥 下载](https://golang.org/dl/)
-- **MCP 客户端**: Claude Desktop、VS Code Copilot 或其他兼容客户端
-- **操作系统**: Linux (Alpine, Debian, Ubuntu) 优化支持 🐧
-
-### 🛠️ 安装步骤
-
-#### 方式一：从源码构建 (推荐)
+### 💾 安装
 
 ```bash
-# 1️⃣ 克隆项目
-git clone <your-repository-url>
-cd mcp-file-tools
+# 克隆仓库
+git clone <repository-url>
+cd file-bash-tools-linux
 
-# 2️⃣ 安装依赖
+# 安装依赖
 go mod tidy
+```
 
-# 3️⃣ 验证依赖
-go mod verify
+### 🔨 构建
 
-# 4️⃣ 编译项目
+#### 方式一：手动构建（推荐开发环境）
+
+```bash
+# 当前平台
 go build -o mcp-server .
 
-# 5️⃣ 验证构建
-./mcp-server --version
+# 包含版本信息
+go build -ldflags "-X main.Version=dev" -o mcp-server .
 ```
 
-#### 方式二：使用构建脚本
+#### 方式二：多平台构建
 
-**Windows (PowerShell):**
 ```powershell
+# PowerShell（Windows）
 pwsh.exe -File build.ps1
-```
 
-**Linux/macOS:**
-```bash
-# 多平台构建
-chmod +x build-release.sh
+# 或Linux/macOS Bash
 ./build-release.sh
-
-# 或指定版本
-VERSION=1.0.0 ./build-release.sh
 ```
 
-构建完成后，可执行文件将位于 `dist/` 目录中：
-- `mcp-server.exe` (~5.5 MB) - Windows x64
-- `mcp-server-linux` (~5.3 MB) - Linux AMD64
-- `mcp-server-linux-arm64` (~5.1 MB) - Linux ARM64
-
-### ▶️ 运行服务器
-
-#### 标准模式 (推荐用于 MCP 客户端)
+### ▶️ 运行
 
 ```bash
-# 基本运行
+# 标准模式
 ./mcp-server
 
-# 带版本信息
+# 查看版本
 ./mcp-server --version
 
-# 带帮助信息
+# 查看帮助
 ./mcp-server --help
 ```
 
-#### HTTP 模式 (可选)
+---
 
-```bash
-# 启动 HTTP 服务器
-./mcp-server -http :8080
+## 📋 项目结构
 
-# 自定义地址和端口
-./mcp-server -http 192.168.1.100:9000
+```
+file-bash-tools-linux/
+├── 📄 main.go                      # MCP服务器入口
+├── 📄 go.mod                       # Go模块定义
+│
+├── 🛠️ tools/                       # 工具实现目录
+│   ├── bash.go                     # Bash命令工具
+│   ├── file.go                     # 文件操作工具
+│   ├── todo.go                     # 任务管理工具
+│   ├── tools.go                    # 工具注册（当前为空）
+│   │
+│   ├── 🧪 bash_test.go             # Bash工具测试
+│   ├── 🧪 read_file_test.go        # ReadFile工具测试
+│   ├── 🧪 write_file_test.go       # WriteFile工具测试
+│   ├── 🧪 edit_file_test.go        # EditFile工具测试
+│   ├── 🧪 glob_test.go             # Glob工具测试
+│   ├── 🧪 grep_test.go             # Grep工具测试
+│   ├── 🧪 todo_test.go             # Todo工具测试
+│   ├── 🧪 resolve_path_test.go     # 路径解析测试
+│   ├── 🧪 truncate_by_tokens_test.go # Token截断测试
+│   ├── 🧪 get_search_path_test.go  # 搜索路径测试
+│   ├── 🧪 parse_range_test.go      # 范围解析测试
+│   ├── 🧪 parse_line_number_test.go # 行号解析测试
+│   ├── 🧪 search_lines_test.go     # 搜索行测试
+│   ├── 🧪 get_shell_command_test.go # Shell命令测试
+│   │
+│   └── 📊 testdata/                # 测试数据目录
+│
+├── 📜 BUILD.md                     # 构建指南
+├── 📚 CLAUDE.md                    # Claude Code开发指南
+├── 👥 AGENTS.md                    # 贡献者指南
+├── 📝 todo.md                      # TypeScript类型定义
+└── 📖 README.md                    # 项目文档
 ```
 
 ---
 
-## 🔧 MCP 客户端配置
+## 🧪 测试
 
-### Claude Desktop 配置
-
-按照以下步骤配置 Claude Desktop：
-
-#### 1️⃣ 定位配置文件
-
-**macOS/Linux:**
-```bash
-~/Library/Application Support/Claude/claude_desktop_config.json
-```
-
-**Windows:**
-```bash
-%APPDATA%\Claude\claude_desktop_config.json
-```
-
-#### 2️⃣ 编辑配置
-
-在 `claude_desktop_config.json` 中添加：
-
-```json
-{
-  "mcpServers": {
-    "file-tools": {
-      "command": "/full/path/to/mcp-server",
-      "args": [],
-      "env": {}
-    }
-  }
-}
-```
-
-#### 3️⃣ 重启客户端
-
-重启 Claude Desktop，服务器将自动加载！🎉
-
-### VS Code Copilot 配置
-
-创建 `.vscode/mcp.json` 文件：
-
-```json
-{
-  "mcpServers": {
-    "file-tools": {
-      "command": "/full/path/to/mcp-server",
-      "args": []
-    }
-  }
-}
-```
-
----
-
-## 📖 实用示例
-
-### 📂 文件操作示例
-
-#### 读取文件特定行
-
-```json
-{
-  "tool": "read_file",
-  "arguments": {
-    "filePath": "/path/to/project/main.go",
-    "offset": 1,
-    "limit": 50
-  }
-}
-```
-
-#### 创建新文件
-
-```json
-{
-  "tool": "write_file",
-  "arguments": {
-    "filePath": "/path/to/newfile.txt",
-    "content": "Hello, MCP World! 🌟\n这是第二行内容。"
-  }
-}
-```
-
-#### 编辑文件内容
-
-```json
-{
-  "tool": "edit_file",
-  "arguments": {
-    "filePath": "/path/to/config.yaml",
-    "old_string": "old_value: 123",
-    "new_string": "old_value: 456",
-    "replace_all": true
-  }
-}
-```
-
-#### 搜索项目文件
-
-```json
-{
-  "tool": "glob",
-  "arguments": {
-    "pattern": "**/*.go",
-    "path": "/path/to/project"
-  }
-}
-```
-
-#### 文本内容搜索
-
-```json
-{
-  "tool": "grep",
-  "arguments": {
-    "pattern": "TODO|FIXME",
-    "path": "/path/to/project",
-    "caseSensitive": false,
-    "output_mode": "content",
-    "-n": true
-  }
-}
-```
-
-### 🐚 Shell 命令示例
-
-#### 执行简单命令
-
-```json
-{
-  "tool": "bash",
-  "arguments": {
-    "command": "ls -la /var/log",
-    "timeout": 5000
-  }
-}
-```
-
-#### 项目构建
-
-```json
-{
-  "tool": "bash",
-  "arguments": {
-    "command": "go build -o myapp .",
-    "workingDir": "/path/to/project",
-    "timeout": 30000
-  }
-}
-```
-
-#### 后台服务运行
-
-```json
-{
-  "tool": "bash",
-  "arguments": {
-    "command": "python -m http.server 8000",
-    "run_in_background": true,
-    "timeout": 0
-  }
-}
-```
-
-#### 获取后台进程输出
-
-```json
-{
-  "tool": "bash_output",
-  "arguments": {
-    "bash_id": "process-12345"
-  }
-}
-```
-
-#### 终止后台进程
-
-```json
-{
-  "tool": "kill_shell",
-  "arguments": {
-    "shell_id": "process-12345"
-  }
-}
-```
-
----
-
-## 🧪 测试与验证
-
-### 运行测试套件
+### 运行测试
 
 ```bash
 # 运行所有测试
 go test ./...
 
-# 运行特定测试
-go test -v tools/file_test.go tools/file.go
+# 运行特定测试文件
+go test -v tools/bash_test.go tools/bash.go
 
-# 生成覆盖率报告
+# 生成测试覆盖率报告
 go test -cover ./...
 
-# 运行功能测试脚本
-chmod +x test_functions.sh
-./test_functions.sh
+# 输出覆盖率到文件
+go test -coverprofile=coverage.out ./...
+go go tool cover -html=coverage.out -o coverage.html
 ```
 
-### 代码质量检查
+### 📊 测试统计
+
+- **测试文件数量**: 15+ 个
+- **核心测试覆盖**:
+  - ✅ Bash命令执行
+  - ✅ 文件读写操作
+  - ✅ Todo任务管理
+  - ✅ 工具函数
+- **测试覆盖率**: **86%+** 🎯
+- **功能测试**: `./test_functions.sh`
+
+### 🎯 测试特性
+
+- 使用 `github.com/stretchr/testify/assert`
+- 完整单元测试覆盖
+- 集成测试支持
+- 性能测试（可选）
+
+---
+
+## 🔒 安全
+
+### 🛡️ 安全特性
+
+1. **路径验证**
+
+   - ✅ 所有文件路径必须为绝对路径
+   - ✅ 防止路径遍历攻击
+   - ✅ 自动清理路径
+2. **命令执行保护**
+
+   - ⏱️ 默认30秒超时（可配置）
+   - ⏱️ 最大超时限制：600秒
+   - 🔒 仅受信任客户端使用
+3. **进程管理**
+
+   - 🧹 自动清理后台进程
+   - 💾 100KB输出缓冲区限制
+   - 🔄 优雅终止（SIGINT → SIGKILL）
+4. **编码安全**
+
+   - ✅ UTF-8编码验证
+   - ✅ 防止无效字符
+5. **环境变量**
+
+   - 🚫 避免暴露敏感信息
+   - 🔐 安全处理API密钥和令牌
+
+### ⚠️ 安全建议
+
+- 仅在**受信任环境**中使用
+- **定期更新**依赖库
+- 监控**长时间运行**的进程
+- 使用**最小权限**原则
+
+---
+
+## 🤝 贡献
+
+我们欢迎所有形式的贡献！🎉
+
+### 📝 贡献流程
+
+1. **Fork** 仓库
+2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 打开 **Pull Request**
+
+### ✅ 贡献要求
+
+- [ ] 添加**适当的测试**覆盖
+- [ ] 通过 `go vet` 和 `go fmt` 检查
+- [ ] 更新**相关文档**
+- [ ] 遵循项目**编码标准**
+- [ ] 确保**跨平台兼容性**
+
+### 📋 编码规范
+
+- 使用 `gofmt` 自动格式化
+- 完整的**类型注释**
+- 包含**错误处理**
+- 添加**测试用例**
+- 编写**清晰注释**
+
+### 💬 提交信息格式
+
+```
+type(scope): description
+
+feat(bash): add timeout configuration
+fix(file): handle UTF-8 encoding errors
+docs(readme): update installation guide
+test(tools): add integration tests
+```
+
+---
+
+## 📦 构建输出
+
+使用 `build.ps1` 构建后，`dist/` 目录将包含：
+
+| 文件名                     | 平台        | 大小    | 描述               |
+| -------------------------- | ----------- | ------- | ------------------ |
+| `mcp-server.exe`         | Windows x64 | ~5.5 MB | PE32+ 可执行文件   |
+| `mcp-server-linux`       | Linux AMD64 | ~5.3 MB | x86-64 二进制文件  |
+| `mcp-server-linux-arm64` | Linux ARM64 | ~5.1 MB | aarch64 二进制文件 |
+| `mcp-server-current`     | 当前平台    | -       | 本机构建版本       |
+
+### 🔨 静态链接
+
+Linux版本使用**musl-gcc**静态链接，避免依赖问题：
 
 ```bash
-# 格式化代码
-gofmt -l .
-
-# 静态分析
-go vet ./...
-
-# 依赖验证
-go mod verify
-
-# 构建测试
-go build -o /tmp/test-build .
+CGO_ENABLED=1
+CC=musl-gcc
 ```
 
 ---
 
-## 📦 构建与发布
+## 📖 文档
 
-### 开发构建
-
-```bash
-# 编译当前平台
-go build -o mcp-server .
-
-# 带版本信息
-go build -ldflags "-X main.Version=dev" -o mcp-server .
-```
-
-### 生产构建
-
-创建静态链接的生产版本：
-
-```bash
-# Linux 静态构建
-./build-release.sh
-
-# 或指定版本
-VERSION=1.0.0 ./build-release.sh
-```
-
-### 多平台交叉编译
-
-```powershell
-# Windows PowerShell (自动多平台构建)
-pwsh.exe -File build.ps1
-```
-
-构建输出将位于 `dist/` 目录。
+| 文档                  | 描述                         |
+| --------------------- | ---------------------------- |
+| 📄**README.md** | 项目说明和使用指南（本文档） |
+| 🔨**BUILD.md**  | 详细构建说明和故障排除       |
+| 🤖**CLAUDE.md** | Claude Code开发指南          |
+| 👥**AGENTS.md** | 贡献者指南和开发标准         |
+| 📝**todo.md**   | TypeScript类型定义           |
 
 ---
 
-## ⚠️ 安全注意事项
+## 🐛 故障排除
 
-在使用本服务器时，请务必注意以下安全事项：
+### 常见问题
 
-### 🔒 关键安全点
+#### Q: 构建失败？
 
-1. **Shell 命令执行** ⚠️
-   - `bash` 工具可以执行任意 shell 命令
-   - **仅在受信任的环境中使用**
-   - 建议配置命令白名单
+**A:** 确保：
 
-2. **文件系统访问** 🔐
-   - 工具可以读取、修改、删除文件系统中的文件
-   - **注意权限控制**，避免访问敏感目录
-   - 建议在沙盒环境中运行
+- Go 1.23+ 已安装 (`go version`)
+- 运行 `go mod tidy` 同步依赖
+- 检查模块名称：`mcp-file-tools`
 
-3. **环境变量保护** 🛡️
-   - 设置环境变量时避免泄露敏感信息
-   - 不要在日志中输出密钥或令牌
+#### Q: 测试超时？
 
-4. **后台进程管理** 🔄
-   - 长时间运行的进程会持续占用系统资源
-   - **及时清理** 无用的后台进程
-   - 监控进程资源使用情况
+**A:** 检查：
 
-### 🛡️ 最佳实践
+- 后台进程是否未正确清理
+- 查看测试文件是否有无限循环
+- 使用：`go test -v -timeout 30s ./...`
 
-- 在容器或虚拟机中运行服务器
-- 定期更新依赖和补丁
-- 配置适当的文件权限（推荐 `700` 目录权限）
-- 使用防火墙限制网络访问
-- 启用审计日志记录操作
+#### Q: 权限错误？
 
----
+**A:** 验证：
 
-## 🏗️ 项目架构
+- 文件权限和用户访问权限
+- 文件操作需要绝对路径
+- 目录写权限检查
 
-### 目录结构
+#### Q: 跨平台编译问题？
 
-```
-mcp-file-tools/
-├── main.go                    # MCP 服务器入口点 🏁
-├── go.mod                     # Go 模块定义
-├── go.sum                     # 依赖校验文件
-├── build.ps1                  # Windows 多平台构建脚本 🪟
-├── build-release.sh           # Linux 静态构建脚本 🐧
-├── test_functions.sh          # 功能测试脚本 🧪
-├── README.md                  # 项目文档 📚
-├── BUILD.md                   # 构建文档 🔨
-├── AGENTS.md                  # 开发者指南 👨‍💻
-├── todo.md                    # TypeScript 类型定义 📝
-└── tools/                     # 工具模块目录 🧰
-    ├── tools.go               # 模块注册中心
-    ├── file.go                # 文件操作工具
-    ├── file_test.go           # 文件工具测试
-    ├── bash.go                # Shell 执行工具
-    ├── bash_test.go           # Bash 工具测试
-    ├── todo.go                # Todo 管理工具
-    ├── todo_test.go           # Todo 工具测试
-    ├── web.go                 # Web 工具 (可选)
-    └── web_test.go            # Web 工具测试
-```
+**A:** 使用：
 
-### 核心组件说明
-
-#### 1️⃣ Main Server (`main.go:1-70`)
-- 初始化 MCP 服务器实例
-- 注册所有工具模块
-- 支持 stdio 和 HTTP 传输
-- 遵循 [MCP 规范](https://modelcontextprotocol.io/)
-
-#### 2️⃣ File Tools (`tools/file.go:1-300`)
-- 完整的文件 I/O 操作
-- 高级模式匹配和搜索
-- 企业级错误处理
-
-#### 3️⃣ Bash Tools (`tools/bash.go:1-200`)
-- 安全的 shell 命令执行
-- 后台进程生命周期管理
-- 资源清理和超时控制
+- PowerShell构建脚本（推荐）
+- 或设置 `GOOS`/`GOARCH` 环境变量
+- 确保 `CGO_ENABLED=1` 静态链接
 
 ---
 
-## 📊 性能特性
+## 📄 许可证
 
-### 🚀 优化亮点
-
-- **静态链接**: Linux 构建使用 musl-gcc，避免动态依赖问题
-- **多线程并发**: grep 等工具支持并行搜索
-- **内存优化**: 大文件分块读取，防止内存溢出
-- **进程池**: 后台进程自动管理，避免资源泄漏
-
-### 📈 基准测试
-
-典型操作性能参考：
-
-| 操作 | 文件大小 | 平均耗时 |
-|------|---------|---------|
-| read_file | 1MB | <10ms |
-| grep | 10MB | <100ms |
-| glob | 1000 files | <50ms |
-
-*测试环境: Ubuntu 22.04, Go 1.23, SSD*
+本项目采用 **MIT** 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
 
 ---
 
-## 🤝 贡献指南
+## 🙏 致谢
 
-欢迎社区贡献！让我们一起让这个项目更强大！💪
+感谢以下开源项目：
 
-### 🎯 贡献方式
-
-- 🐛 提交 Bug 报告
-- 💡 提出新功能建议
-- 📝 改进文档和示例
-- 🔧 提交代码修复或新功能
-- 🧪 添加测试用例
-
-### 📋 开发流程
-
-1. **Fork** 项目到您的 GitHub 账户
-2. **创建** 功能分支 (`git checkout -b feature/AmazingFeature`)
-3. **提交** 更改 (`git commit -m 'Add some AmazingFeature'`)
-4. **推送** 到分支 (`git push origin feature/AmazingFeature`)
-5. **开启** Pull Request
-
-### ✅ 代码规范
-
-- 遵循 [Go 代码规范](https://golang.org/doc/effective_go.html)
-- 添加适当的单元测试
-- 确保所有测试通过 (`go test ./...`)
-- 更新相关文档
-
----
-
-## 🆘 常见问题
-
-### Q: 构建失败，提示 "go: cannot find main module"？
-
-**A:** 请确保您在项目根目录，并运行了 `go mod tidy`
-
-```bash
-go mod tidy
-go build -o mcp-server .
-```
-
-### Q: 测试超时，如何解决？
-
-**A:** 检查是否有挂起的后台进程，确保在测试后正确清理
-
-```bash
-# 查看后台进程
-ps aux | grep mcp-server
-
-# 清理测试进程
-pkill -f mcp-server
-```
-
-### Q: 权限错误，如何解决？
-
-**A:** 验证文件权限，确保用户有读写权限
-
-```bash
-# 检查文件权限
-ls -la /path/to/file
-
-# 设置权限 (谨慎使用)
-chmod 644 /path/to/file
-```
-
-### Q: 如何查看详细日志？
-
-**A:** 启用调试模式
-
-```bash
-./mcp-server --verbose
-```
-
-### Q: 支持 Windows 吗？
-
-**A:** 主要针对 Linux 优化，但可以使用 Windows 子系统 (WSL2) 运行
-
----
-
-## 📚 参考资源
-
-- **MCP 官方规范**: [modelcontextprotocol.io](https://modelcontextprotocol.io/)
-- **Go 官方文档**: [golang.org](https://golang.org/doc/)
-- **MCP Go SDK**: [github.com/modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk)
-- **最佳实践**: [MCP 安全指南](https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices)
-
----
-
-## 📜 许可证
-
-本项目采用 [MIT 许可证](LICENSE) 开源，详情请参阅许可证文件。
-
----
-
-## 👏 致谢
-
-感谢以下开源项目和社区：
-
-- [Model Context Protocol](https://modelcontextprotocol.io/) - 强大的协议规范
-- [Go 语言](https://golang.org/) - 优秀的系统编程语言
-- Linux 社区 - 持续的测试和反馈
-
----
-
-## 📞 联系我们
-
-- 🐛 **问题报告**: [GitHub Issues](https://github.com/your-repo/issues)
-- 💬 **讨论交流**: [GitHub Discussions](https://github.com/your-repo/discussions)
-- 📧 **邮件联系**: your-email@example.com
+- [MCP SDK](https://github.com/modelcontextprotocol/go-sdk) - 协议实现
+- [doublestar/v4](https://github.com/bmatcuk/doublestar) - 高级glob匹配
+- [stretchr/testify](https://github.com/stretchr/testify) - 测试框架
 
 ---
 
 <div align="center">
 
-**⭐ 如果这个项目对您有帮助，请给我们一个 Star！ ⭐**
+**⭐ 如果这个项目对你有帮助，请给我们一个Star！⭐**
 
-Made with ❤️ by 小C
+Made with ❤️ by MCP Tools Team
 
 </div>

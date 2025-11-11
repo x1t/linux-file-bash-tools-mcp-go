@@ -60,9 +60,6 @@ func main() {
 	// 注册待办事项工具
 	tools.AddTodoTools(server)
 
-	// 注册Web工具
-	tools.AddWebTools(server)
-
 	// 启动服务器
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatal(err)
