@@ -13,7 +13,7 @@ import (
 type TodoItem struct {
 	Content   string `json:"content" jsonschema:"任务描述" jsonschema:"required"`
 	Status    string `json:"status" jsonschema:"任务状态 (pending|in_progress|completed)" jsonschema:"required"`
-	ActiveForm string `json:"activeForm" jsonschema:"任务描述的主动形式" jsonschema:"required"`
+	ActiveForm string `json:"activeForm" jsonschema:"任务描述的主动形式 (例如 '修复bug' 而不是 'bug已修复' 或 '修复了bug')" jsonschema:"required"`
 }
 
 // TodoWriteParams 定义TodoWrite工具参数

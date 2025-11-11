@@ -46,15 +46,32 @@ echo ""
 # 验证二进制文件
 echo "🧪 验证二进制文件..."
 
-# 检查静态链接
-if ldd "${BINARY_PATH}" 2>&1 | grep -q "not a dynamic executable"; then
-    echo "🔒 静态链接: ✅"
+# 检查静态链接 (跨平台兼容)
+OS_NAME=$(uname -s)
+if [[ "$OS_NAME" == "Linux" ]]; then
+    # Linux 使用 ldd 检查
+    if ldd "${BINARY_PATH}" 2>&1 | grep -q "not a dynamic executable"; then
+        echo "🔒 静态链接: ✅"
+    else
+        echo "⚠️ 静态链接: 可能不完全"
+    fi
+elif [[ "$OS_NAME" == "Darwin" ]]; then
+    # macOS 使用 otool 检查
+    if otool -L "${BINARY_PATH}" 2>&1 | grep -q "no dynamic libraries"; then
+        echo "🔒 静态链接: ✅"
+    else
+        echo "⚠️ 静态链接: 可能不完全"
+    fi
 else
-    echo "⚠️ 静态链接: 可能不完全"
+    echo "⚠️ 静态链接: 未知平台，无法验证"
 fi
 
 # 文件信息
-echo "📊 文件信息: $(file ${BINARY_PATH})"
+if command -v file >/dev/null 2>&1; then
+    echo "📊 文件信息: $(file ${BINARY_PATH})"
+else
+    echo "📊 文件信息: file command not available"
+fi
 echo "📏 文件大小: $(ls -lh ${BINARY_PATH} | cut -d' ' -f5)"
 
 # 功能测试
@@ -88,6 +105,17 @@ sha256sum "${BINARY_NAME}.tar.gz" > "${BINARY_NAME}.tar.gz.sha256"
 echo "✅ 校验和: ${BINARY_NAME}.sha256"
 
 # 3. 生成构建信息
+STATIC_LINKED="否"
+if [[ "$OS_NAME" == "Linux" ]]; then
+    if ldd "${BINARY_PATH}" 2>&1 | grep -q "not a dynamic executable"; then
+        STATIC_LINKED="是"
+    fi
+elif [[ "$OS_NAME" == "Darwin" ]]; then
+    if otool -L "${BINARY_PATH}" 2>&1 | grep -q "no dynamic libraries"; then
+        STATIC_LINKED="是"
+    fi
+fi
+
 cat > "build-info.txt" << EOF
 项目名称: ${PROJECT_NAME}
 版本: ${VERSION}
@@ -98,7 +126,7 @@ Go 版本: $(go version)
 构建主机: $(hostname)
 操作系统: $(uname -a)
 二进制大小: $(ls -lh "${BINARY_NAME}" | cut -d' ' -f5)
-静态链接: $(ldd "${BINARY_PATH}" 2>&1 | grep -q "not a dynamic executable" && echo "是" || echo "否")
+静态链接: ${STATIC_LINKED}
 EOF
 echo "✅ 构建信息: build-info.txt"
 

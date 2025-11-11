@@ -17,12 +17,19 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// LimitedBuffer 实现一个带限制的缓冲区，防止无限内存增长
+type LimitedBuffer struct {
+	data     []byte
+	maxSize  int
+	mutex    sync.Mutex
+}
+
 // BashParams 定义bash命令参数 (完全符合todo.md标准)
 type BashParams struct {
 	Command         string      `json:"command" jsonschema:"Shell command to execute"`
 	Description     string      `json:"description,omitempty" jsonschema:"5-10 word brief description of command functionality"`
 	Timeout         int         `json:"timeout,omitempty" jsonschema:"Optional timeout in milliseconds (max 600000)"`
-	RunInBackground interface{} `json:"run_in_background,omitempty" jsonschema:"Set to true to run command in background"`
+	RunInBackground bool        `json:"run_in_background,omitempty" jsonschema:"Set to true to run command in background"`
 }
 
 // BashOutputParams 定义获取bash输出参数 (完全符合todo.md标准)
@@ -57,13 +64,68 @@ type KillShellResult struct {
 	ShellID string `json:"shell_id"` // Shell ID of the killed process
 }
 
+// NewLimitedBuffer 创建一个新的带限制的缓冲区
+func NewLimitedBuffer(maxSize int) *LimitedBuffer {
+	return &LimitedBuffer{
+		data:    make([]byte, 0, maxSize),
+		maxSize: maxSize,
+	}
+}
+
+// Write 向缓冲区写入数据，如果超过最大尺寸则丢弃旧数据
+func (lb *LimitedBuffer) Write(p []byte) (n int, err error) {
+	lb.mutex.Lock()
+	defer lb.mutex.Unlock()
+	
+	newLen := len(lb.data) + len(p)
+	if newLen <= lb.maxSize {
+		// 如果新数据长度未超过限制，直接追加
+		lb.data = append(lb.data, p...)
+	} else {
+		// 如果超过限制，则丢弃旧数据，保留最新的数据
+		keepSize := lb.maxSize - len(p)
+		if keepSize <= 0 {
+			// 如果单次写入就超过了最大尺寸，只保留最新的最大尺寸数据
+			if len(p) >= lb.maxSize {
+				lb.data = make([]byte, lb.maxSize)
+				copy(lb.data, p[len(p)-lb.maxSize:])
+			} else {
+				lb.data = make([]byte, len(p))
+				copy(lb.data, p)
+			}
+		} else {
+			// 移动旧数据到前面，释放空间
+			copy(lb.data, lb.data[len(lb.data)-keepSize:])
+			lb.data = lb.data[:keepSize]
+			lb.data = append(lb.data, p...)
+		}
+	}
+	
+	return len(p), nil
+}
+
+// String 返回缓冲区内容的字符串表示
+func (lb *LimitedBuffer) String() string {
+	lb.mutex.Lock()
+	defer lb.mutex.Unlock()
+	return string(lb.data)
+}
+
+// Reset 清空缓冲区
+func (lb *LimitedBuffer) Reset() {
+	lb.mutex.Lock()
+	defer lb.mutex.Unlock()
+	lb.data = lb.data[:0]
+}
+
 // ProcessInfo 存储后台进程信息
 type ProcessInfo struct {
 	Cmd       *exec.Cmd
-	Stdout    bytes.Buffer
-	Stderr    bytes.Buffer
+	Stdout    *LimitedBuffer
+	Stderr    *LimitedBuffer
 	StartTime time.Time
 	Mutex     sync.Mutex
+	Done      chan struct{} // 用于通知进程结束
 }
 
 // 全局变量来跟踪后台进程
@@ -166,7 +228,7 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 	cmd := exec.Command(shell, args...)
 
 	// 检查是否后台执行
-	if parseBool(params.RunInBackground) {
+	if params.RunInBackground {
 		// 创建管道来捕获输出
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -178,10 +240,13 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 			return nil, BashResult{}, fmt.Errorf("Failed to create stderr pipe: %w", err)
 		}
 
-		// 创建进程信息对象
+		// 创建进程信息对象，使用带限制的缓冲区
 		processInfo := &ProcessInfo{
 			Cmd:       cmd,
+			Stdout:    NewLimitedBuffer(1024 * 100), // 100KB 限制
+			Stderr:    NewLimitedBuffer(1024 * 100), // 100KB 限制
 			StartTime: startTime,
+			Done:      make(chan struct{}),
 		}
 
 		// 启动命令
@@ -198,19 +263,29 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 		go func() {
 			scanner := bufio.NewScanner(stdout)
 			for scanner.Scan() {
-				processInfo.Mutex.Lock()
-				processInfo.Stdout.WriteString(scanner.Text() + "\n")
-				processInfo.Mutex.Unlock()
+				line := scanner.Text() + "\n"
+				processInfo.Stdout.Write([]byte(line))
 			}
 		}()
 
 		go func() {
 			scanner := bufio.NewScanner(stderr)
 			for scanner.Scan() {
-				processInfo.Mutex.Lock()
-				processInfo.Stderr.WriteString(scanner.Text() + "\n")
-				processInfo.Mutex.Unlock()
+				line := scanner.Text() + "\n"
+				processInfo.Stderr.Write([]byte(line))
 			}
+		}()
+
+		// 异步等待进程结束，完成后通知
+		go func() {
+			_ = cmd.Wait()
+			// 进程结束后，将进程信息标记为完成
+			close(processInfo.Done)
+			
+			// 从跟踪列表中删除进程，这个操作需要在锁的保护下完成
+			processMutex.Lock()
+			delete(backgroundProcesses, cmd.Process.Pid)
+			processMutex.Unlock()
 		}()
 
 		return nil, BashResult{
@@ -293,6 +368,7 @@ func bashOutputHandler(ctx context.Context, req *mcp.CallToolRequest, params Bas
 		return nil, BashOutputResult{}, fmt.Errorf("Invalid bash_id format: %s", params.BashID)
 	}
 
+	// 获取进程信息，使用锁保护
 	processMutex.Lock()
 	processInfo, exists := backgroundProcesses[pid]
 	if !exists {
@@ -300,6 +376,7 @@ func bashOutputHandler(ctx context.Context, req *mcp.CallToolRequest, params Bas
 		return nil, BashOutputResult{}, fmt.Errorf("Background process with bash_id %s not found", params.BashID)
 	}
 
+	// 读取当前输出
 	stdout := cleanANSI(processInfo.Stdout.String())
 	stderr := cleanANSI(processInfo.Stderr.String())
 
@@ -327,39 +404,32 @@ func bashOutputHandler(ctx context.Context, req *mcp.CallToolRequest, params Bas
 		}
 	}
 
-	// 获取进程状态
-	process := processInfo.Cmd.Process
+	// 检查进程状态 - 非阻塞方式
 	status := "running"
 	var exitCode int
 
-	if process == nil {
-		// 进程已经结束，清理并返回
-		delete(backgroundProcesses, pid)
-		processMutex.Unlock()
-		return nil, BashOutputResult{
-			Output:   output,
-			Status:   "completed",
-			ExitCode: 0,
-		}, nil
+	// 检查进程是否已经结束（使用Done channel进行非阻塞检查）
+	select {
+	case <-processInfo.Done:
+		// 进程已经结束，获取退出码
+		if processInfo.Cmd.ProcessState != nil {
+			exitCode = processInfo.Cmd.ProcessState.ExitCode()
+		} else {
+			exitCode = 1 // 假设非正常退出
+		}
+		
+		// 确定状态
+		if processInfo.Cmd.ProcessState != nil && processInfo.Cmd.ProcessState.Success() {
+			status = "completed"
+		} else {
+			status = "failed"
+		}
+	default:
+		// 进程仍在运行
+		status = "running"
 	}
 
-	// 检查进程是否已经结束
 	processMutex.Unlock()
-	err = processInfo.Cmd.Wait()
-	if err == nil {
-		// 进程正常结束
-		processMutex.Lock()
-		delete(backgroundProcesses, pid)
-		processMutex.Unlock()
-		status = "completed"
-	} else if exitError, ok := err.(*exec.ExitError); ok {
-		// 进程异常结束
-		processMutex.Lock()
-		delete(backgroundProcesses, pid)
-		processMutex.Unlock()
-		status = "failed"
-		exitCode = exitError.ExitCode()
-	}
 
 	return nil, BashOutputResult{
 		Output:   output,
@@ -397,10 +467,21 @@ func killShellHandler(ctx context.Context, req *mcp.CallToolRequest, params Kill
 		}
 	}
 
-	// 等待进程结束
-	processInfo.Cmd.Wait()
+	// 等待进程结束，但不阻塞太久
+	done := make(chan error, 1)
+	go func() {
+		done <- processInfo.Cmd.Wait()
+	}()
 
-	// 从跟踪列表中删除
+	select {
+	case <-done:
+		// 进程已终止
+	case <-time.After(5 * time.Second):
+		// 超时，强制终止进程
+		_ = processInfo.Cmd.Process.Kill()
+	}
+
+	// 从跟踪列表中删除，如果进程还未结束则会由goroutine处理
 	delete(backgroundProcesses, pid)
 	processMutex.Unlock()
 

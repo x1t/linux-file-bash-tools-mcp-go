@@ -1,0 +1,4 @@
+This is a test file
+With multiple lines
+And some keywords like function and test
+We can search for patterns

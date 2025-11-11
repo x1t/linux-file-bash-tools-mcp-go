@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -19,6 +21,7 @@ type ReadParams struct {
 	FilePath string `json:"file_path" jsonschema:"Absolute path of the file to read"`
 	Offset   int    `json:"offset,omitempty" jsonschema:"Starting line number (default: 1)"`
 	Limit    int    `json:"limit,omitempty" jsonschema:"Number of lines to read"`
+	ShowLineNumbers interface{} `json:"show_line_numbers,omitempty" jsonschema:"Whether to show line numbers (default: true)"`
 }
 
 // WriteParams 定义写入文件参数 (完全符合todo.md标准)
@@ -29,13 +32,11 @@ type WriteParams struct {
 
 // EditParams 定义编辑文件参数 (完全符合todo.md标准)
 type EditParams struct {
-	FilePath  string `json:"filePath,omitempty" jsonschema:"Path to the file to edit"`
-	FilePath1 string `json:"file_path,omitempty" jsonschema:"Path to the file to edit (alternative naming)"`
-	FilePath2 string `json:"filepath,omitempty" jsonschema:"Path to the file to edit (alternative naming)"`
+	FilePath  string `json:"file_path" jsonschema:"Path to the file to edit"`
 	// todo.md标准参数
-	OldString  string `json:"old_string,omitempty" jsonschema:"String to be replaced"`
-	NewString  string `json:"new_string,omitempty" jsonschema:"String to replace with"`
-	ReplaceAll interface{} `json:"replace_all,omitempty" jsonschema:"Replace all occurrences (default: false)"`
+	OldString  string `json:"old_string" jsonschema:"String to be replaced"`
+	NewString  string `json:"new_string" jsonschema:"String to replace with"`
+	ReplaceAll bool `json:"replace_all,omitempty" jsonschema:"Replace all occurrences (default: false)"`
 	// BasePath 基准目录，用于解析相对路径
 	BasePath string `json:"basePath,omitempty" jsonschema:"Base directory for resolving relative paths"`
 }
@@ -55,16 +56,13 @@ type GlobParams struct {
 // GrepParams 定义搜索参数
 type GrepParams struct {
 	Pattern       string      `json:"pattern" jsonschema:"Text or regex pattern to search for"`
-	FilePath      string      `json:"filePath,omitempty" jsonschema:"Specific file to search in"`
-	FilePath1     string      `json:"file_path,omitempty" jsonschema:"Specific file to search in (alternative naming)"`
-	FilePath2     string      `json:"filepath,omitempty" jsonschema:"Specific file to search in (alternative naming)"`
+	FilePath      string      `json:"file_path,omitempty" jsonschema:"Specific file to search in"`
 	Path          string      `json:"path,omitempty" jsonschema:"Directory to search in"`
-	Path1         string      `json:"Path,omitempty" jsonschema:"Directory to search in (alternative naming)"`
 	GlobPattern   string      `json:"glob,omitempty" jsonschema:"Glob pattern to filter files (e.g., '*.js')"`
 	FileType      string      `json:"type,omitempty" jsonschema:"File type to search (e.g., 'js', 'py', 'rust')"`
 	OutputMode    string      `json:"output_mode,omitempty" jsonschema:"Output mode: 'content' | 'files_with_matches' | 'count'"`
 	ShowLineNum   interface{} `json:"-n,omitempty" jsonschema:"Show line numbers in output"`
-	CaseSensitive interface{} `json:"caseSensitive,omitempty" jsonschema:"Whether to perform case-sensitive search"`
+	CaseSensitive interface{} `json:"case_sensitive,omitempty" jsonschema:"Whether to perform case-sensitive search"`
 	IgnoreCase    interface{} `json:"-i,omitempty" jsonschema:"Case insensitive search (alternative to caseSensitive)"`
 	Regex         interface{} `json:"regex,omitempty" jsonschema:"Whether to use regex pattern"`
 	Multiline     interface{} `json:"multiline,omitempty" jsonschema:"Enable multiline mode"`
@@ -210,14 +208,21 @@ func readFileHandler(ctx context.Context, req *mcp.CallToolRequest, params ReadP
 		linesReturned = len(selectedLines)
 	}
 
-	// 添加行号前缀 (todo.md标准要求带行号的内容)
-	var numberedLines []string
-	for i, line := range strings.Split(selectedText, "\n") {
-		lineNumber := start + i + 1 // 1基行号
-		numberedLines = append(numberedLines, fmt.Sprintf("%d: %s", lineNumber, line))
+	var contentWithLineNumbers string
+	
+	// 根据参数决定是否添加行号
+	if parseBool(params.ShowLineNumbers) || params.ShowLineNumbers == nil {
+		// 默认显示行号或当参数为true时显示行号
+		var numberedLines []string
+		for i, line := range strings.Split(selectedText, "\n") {
+			lineNumber := start + i + 1 // 1基行号
+			numberedLines = append(numberedLines, fmt.Sprintf("%d: %s", lineNumber, line))
+		}
+		contentWithLineNumbers = strings.Join(numberedLines, "\n")
+	} else {
+		// 不显示行号
+		contentWithLineNumbers = selectedText
 	}
-
-	contentWithLineNumbers := strings.Join(numberedLines, "\n")
 
 	return nil, ReadResult{
 		Content:       contentWithLineNumbers,
@@ -263,8 +268,8 @@ func writeFileHandler(ctx context.Context, req *mcp.CallToolRequest, params Writ
 
 // editFileHandler 处理文件编辑请求 (完全符合todo.md标准)
 func editFileHandler(ctx context.Context, req *mcp.CallToolRequest, params EditParams) (*mcp.CallToolResult, EditResult, error) {
-	// 从多个参数名中获取文件路径
-	filePath := getFilePath(params.FilePath, params.FilePath1, params.FilePath2)
+	// 使用文件路径
+	filePath := params.FilePath
 	if filePath == "" {
 		return nil, EditResult{}, fmt.Errorf("file_path parameter is required")
 	}
@@ -296,7 +301,7 @@ func editFileHandler(ctx context.Context, req *mcp.CallToolRequest, params EditP
 	var replacements int
 
 	// 执行字符串替换 (符合todo.md标准)
-	if parseBool(params.ReplaceAll) {
+	if params.ReplaceAll {
 		// 替换所有出现的old_string
 		newText = strings.ReplaceAll(originalText, params.OldString, params.NewString)
 		replacements = strings.Count(originalText, params.OldString)
@@ -358,8 +363,15 @@ func globHandler(ctx context.Context, req *mcp.CallToolRequest, params GlobParam
 			return nil
 		}
 
-		// 匹配模式（支持**/*.go等高级模式）
-		matched, err := filepath.Match(params.Pattern, filepath.Base(path))
+		// 获取相对于搜索路径的相对路径
+		relPath, err := filepath.Rel(searchPath, path)
+		if err != nil {
+			// 如果无法获取相对路径，使用完整路径
+			relPath = path
+		}
+
+		// 使用 doublestar 进行高级模式匹配，支持 ** 等复杂模式
+		matched, err := doublestar.Match(params.Pattern, relPath)
 		if err != nil {
 			// 如果模式无效，跳过
 			return nil
@@ -379,16 +391,15 @@ func globHandler(ctx context.Context, req *mcp.CallToolRequest, params GlobParam
 		return nil, GlobResult{}, fmt.Errorf("glob匹配失败: %w", err)
 	}
 
-	// 按修改时间排序（最新的在前）
-	for i := 0; i < len(files)-1; i++ {
-		for j := i + 1; j < len(files); j++ {
-			info1, exists1 := fileInfos[files[i]]
-			info2, exists2 := fileInfos[files[j]]
-			if exists1 && exists2 && info1.ModTime().Before(info2.ModTime()) {
-				files[i], files[j] = files[j], files[i]
-			}
+	// 按修改时间排序（最新的在前）- 使用更高效的排序算法
+	sort.Slice(files, func(i, j int) bool {
+		info1, exists1 := fileInfos[files[i]]
+		info2, exists2 := fileInfos[files[j]]
+		if exists1 && exists2 {
+			return info1.ModTime().After(info2.ModTime())
 		}
-	}
+		return exists1 // 存在修改时间信息的排在前面
+	})
 
 	// 应用分页
 	var pagedFiles []string
@@ -433,8 +444,24 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 		outputMode = "content" // 默认输出模式
 	}
 
-	// 从多个参数名中获取文件路径
-	filePath := getFilePath(params.FilePath, params.FilePath1, params.FilePath2)
+	// 预先编译正则表达式，提高性能
+	var re *regexp.Regexp
+	if parseBool(params.Regex) {
+		caseInsensitive := parseBool(params.IgnoreCase) || !parseBool(params.CaseSensitive)
+		var err error
+		if caseInsensitive {
+			re, err = regexp.Compile("(?i)" + params.Pattern)
+		} else {
+			re, err = regexp.Compile(params.Pattern)
+		}
+		if err != nil {
+			// 如果正则表达式编译失败，返回错误而不是回退到字符串匹配
+			return nil, GrepResult{}, fmt.Errorf("正则表达式编译失败: %w", err)
+		}
+	}
+
+	// 从参数中获取文件路径
+	filePath := getFilePath(params.FilePath)
 
 	if filePath != "" {
 		// 在单个文件中搜索
@@ -449,10 +476,10 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 		}
 
 		lines := strings.Split(string(content), "\n")
-		searchLines(lines, params.Pattern, parseBool(params.CaseSensitive), parseBool(params.IgnoreCase), parseBool(params.Regex), actualPath, outputMode, parseBool(params.ShowLineNum), params.ContextBefore, params.ContextAfter, params.Context, &matches, &matchedFiles)
+		searchLines(lines, params.Pattern, re, parseBool(params.CaseSensitive), parseBool(params.IgnoreCase), parseBool(params.Regex), actualPath, outputMode, parseBool(params.ShowLineNum), params.ContextBefore, params.ContextAfter, params.Context, &matches, &matchedFiles)
 	} else {
-		// 从多个参数名中获取搜索路径
-		path := getSearchPath(params.Path, params.Path1)
+		// 从参数中获取搜索路径
+		path := getSearchPath(params.Path)
 
 		// 在目录中搜索
 		searchPath, err := resolvePath(path, params.BasePath)
@@ -477,7 +504,7 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 			}
 
 			lines := strings.Split(string(content), "\n")
-			searchLines(lines, params.Pattern, parseBool(params.CaseSensitive), parseBool(params.IgnoreCase), parseBool(params.Regex), path, outputMode, parseBool(params.ShowLineNum), params.ContextBefore, params.ContextAfter, params.Context, &matches, &matchedFiles)
+			searchLines(lines, params.Pattern, re, parseBool(params.CaseSensitive), parseBool(params.IgnoreCase), parseBool(params.Regex), path, outputMode, parseBool(params.ShowLineNum), params.ContextBefore, params.ContextAfter, params.Context, &matches, &matchedFiles)
 
 			return nil
 		})
@@ -562,27 +589,17 @@ func truncateByTokens(items []string) ([]string, bool) {
 	return truncated, true
 }
 
-// getFilePath 从多个可能的参数名中获取文件路径
-func getFilePath(filePath, filePath1, filePath2 string) string {
-	if filePath != "" {
-		return filePath
-	}
-	if filePath1 != "" {
-		return filePath1
-	}
-	if filePath2 != "" {
-		return filePath2
-	}
-	return ""
+// getFilePath 从参数中获取文件路径
+func getFilePath(filePath string) string {
+	return filePath
 }
 
-// getSearchPath 从多个可能的参数名中获取搜索路径
-func getSearchPath(path, path1 string) string {
-	if path != "" {
-		return path
-	}
-	if path1 != "" {
-		return path1
+// getSearchPath 从参数中获取搜索路径
+func getSearchPath(path ...string) string {
+	for _, p := range path {
+		if p != "" {
+			return p
+		}
 	}
 	return ""
 }
@@ -671,8 +688,8 @@ func resolvePath(filePath, basePath string) (string, error) {
 	return filepath.Abs(filePath)
 }
 
-// searchLines 在行中搜索
-func searchLines(lines []string, pattern string, caseSensitive, ignoreCase bool, regex bool, filePath string, outputMode string, showLineNum bool, contextBefore, contextAfter, context int, matches *[]string, matchedFiles *map[string]bool) {
+// searchLines 在行中搜索，使用预编译的正则表达式
+func searchLines(lines []string, pattern string, re *regexp.Regexp, caseSensitive, ignoreCase bool, regex bool, filePath string, outputMode string, showLineNum bool, contextBefore, contextAfter, context int, matches *[]string, matchedFiles *map[string]bool) {
 	// 确定大小写敏感性
 	caseInsensitive := ignoreCase || !caseSensitive
 
@@ -684,36 +701,23 @@ func searchLines(lines []string, pattern string, caseSensitive, ignoreCase bool,
 		after = context
 	}
 
+	// 预计算大小写转换的模式（仅当非正则表达式时）
+	searchPattern := pattern
+	if !regex && caseInsensitive {
+		searchPattern = strings.ToLower(pattern)
+	}
+
 	for i, line := range lines {
 		var matched bool
 
-		if regex {
-			// 实现真正的正则表达式搜索
-			var re *regexp.Regexp
-			var err error
-			if caseInsensitive {
-				re, err = regexp.Compile("(?i)" + pattern)
-			} else {
-				re, err = regexp.Compile(pattern)
-			}
-			if err != nil {
-				// 正则表达式无效，继续使用字符串匹配
-				searchText := line
-				searchPattern := pattern
-				if caseInsensitive {
-					searchText = strings.ToLower(line)
-					searchPattern = strings.ToLower(pattern)
-				}
-				matched = strings.Contains(searchText, searchPattern)
-			} else {
-				matched = re.MatchString(line)
-			}
+		if regex && re != nil {
+			// 使用预编译的正则表达式搜索
+			matched = re.MatchString(line)
 		} else {
+			// 使用字符串匹配
 			searchText := line
-			searchPattern := pattern
 			if caseInsensitive {
 				searchText = strings.ToLower(line)
-				searchPattern = strings.ToLower(pattern)
 			}
 			matched = strings.Contains(searchText, searchPattern)
 		}
