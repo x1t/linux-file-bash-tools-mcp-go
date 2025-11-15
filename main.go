@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-file-tools/tools"
@@ -60,8 +62,34 @@ func main() {
 	// 注册待办事项工具
 	tools.AddTodoTools(server)
 
-	// 启动服务器
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		log.Fatal(err)
+	// 设置优雅关闭
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 监听系统信号
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// 启动服务器协程
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- server.Run(ctx, &mcp.StdioTransport{})
+	}()
+
+	// 等待服务器结束或收到信号
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			log.Fatal(err)
+		}
+	case sig := <-sigChan:
+		log.Printf("收到信号 %s，正在优雅关闭...", sig)
+		cancel()
+		// 停止bash工具相关资源
+		tools.StopBashTools()
+		// 等待服务器结束
+		if err := <-serverErr; err != nil && err != context.Canceled {
+			log.Printf("服务器关闭错误: %v", err)
+		}
 	}
 }

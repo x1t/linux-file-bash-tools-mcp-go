@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -192,10 +193,17 @@ func readFileHandler(ctx context.Context, req *mcp.CallToolRequest, params ReadP
 	allLines := strings.Split(text, "\n")
 	totalLines := len(allLines)
 
+	// 如果文件完全为空（0字节），则总行数为1
+	if len(content) == 0 {
+		totalLines = 1
+		allLines = []string{""}
+	}
+
 	// 处理offset和limit参数 (符合todo.md标准)
 	start := 0
 	end := totalLines
 
+	// 处理offset参数，确保在有效范围内
 	if params.Offset > 0 {
 		start = params.Offset - 1 // 转换为0基索引
 		if start < 0 {
@@ -204,13 +212,23 @@ func readFileHandler(ctx context.Context, req *mcp.CallToolRequest, params ReadP
 		if start >= totalLines {
 			start = totalLines
 		}
+	} else if params.Offset < 0 {
+		// offset为负数时，从末尾开始计算
+		start = totalLines + params.Offset
+		if start < 0 {
+			start = 0
+		}
 	}
 
+	// 处理limit参数，确保在有效范围内
 	if params.Limit > 0 {
 		end = start + params.Limit
 		if end > totalLines {
 			end = totalLines
 		}
+	} else if params.Limit < 0 {
+		// limit为负数时，忽略该参数
+		end = totalLines
 	}
 
 	// 提取指定范围的行
@@ -260,13 +278,14 @@ func writeFileHandler(ctx context.Context, req *mcp.CallToolRequest, params Writ
 		return nil, WriteResult{}, fmt.Errorf("content parameter is required")
 	}
 
-	// 验证文件路径是绝对路径
-	if !filepath.IsAbs(params.FilePath) {
-		return nil, WriteResult{}, fmt.Errorf("file_path must be an absolute path")
+	// 解析文件路径
+	actualPath, err := resolvePath(params.FilePath, "")
+	if err != nil {
+		return nil, WriteResult{}, fmt.Errorf("解析文件路径失败: %w", err)
 	}
 
 	// 执行安全路径检查
-	if err := isPathInSafeZone(params.FilePath); err != nil {
+	if err := isPathInSafeZone(actualPath); err != nil {
 		return nil, WriteResult{}, fmt.Errorf("安全路径检查失败: %w", err)
 	}
 
@@ -277,20 +296,20 @@ func writeFileHandler(ctx context.Context, req *mcp.CallToolRequest, params Writ
 	}
 
 	// 确保目录存在
-	dir := filepath.Dir(params.FilePath)
+	dir := filepath.Dir(actualPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, WriteResult{}, fmt.Errorf("Failed to create directory: %w", err)
 	}
 
-	// 写入文件
-	if err := os.WriteFile(params.FilePath, contentBytes, 0644); err != nil {
+	// 使用原子操作写入文件，防止数据损坏
+	if err := atomicWriteFile(actualPath, contentBytes, 0644); err != nil {
 		return nil, WriteResult{}, fmt.Errorf("Failed to write file: %w", err)
 	}
 
 	return nil, WriteResult{
-		Message:      fmt.Sprintf("Successfully wrote file: %s", params.FilePath),
+		Message:      fmt.Sprintf("Successfully wrote file: %s", actualPath),
 		BytesWritten: len(contentBytes),
-		FilePath:     params.FilePath,
+		FilePath:     actualPath,
 	}, nil
 }
 
@@ -303,8 +322,11 @@ func editFileHandler(ctx context.Context, req *mcp.CallToolRequest, params EditP
 	}
 
 	// 验证必需参数 (根据todo.md标准)
-	if params.OldString == "" || params.NewString == "" {
-		return nil, EditResult{}, fmt.Errorf("old_string and new_string parameters are required")
+	if params.OldString == "" {
+		return nil, EditResult{}, fmt.Errorf("old_string parameter is required")
+	}
+	if params.NewString == "" {
+		return nil, EditResult{}, fmt.Errorf("new_string parameter is required")
 	}
 
 	// 验证old_string和new_string不相同
@@ -323,15 +345,29 @@ func editFileHandler(ctx context.Context, req *mcp.CallToolRequest, params EditP
 		return nil, EditResult{}, fmt.Errorf("安全路径检查失败: %w", err)
 	}
 
+	// 检查文件是否存在且可读
+	fileInfo, err := os.Stat(actualPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, EditResult{}, fmt.Errorf("文件不存在: %s", actualPath)
+		}
+		return nil, EditResult{}, fmt.Errorf("无法访问文件: %w", err)
+	}
+
+	// 检查文件权限
+	if fileInfo.Mode().Perm()&0444 == 0 {
+		return nil, EditResult{}, fmt.Errorf("文件不可读: %s", actualPath)
+	}
+
+	// 检查文件大小，防止处理过大的文件
+	if fileInfo.Size() > MAX_FILE_SIZE {
+		return nil, EditResult{}, fmt.Errorf("文件过大 (%d bytes)，超过最大限制 %d bytes", fileInfo.Size(), MAX_FILE_SIZE)
+	}
+
 	// 读取原文件
 	content, err := os.ReadFile(actualPath)
 	if err != nil {
 		return nil, EditResult{}, fmt.Errorf("Failed to read file: %w", err)
-	}
-
-	// 检查原始文件大小，防止处理过大的文件
-	if len(content) > MAX_FILE_SIZE {
-		return nil, EditResult{}, fmt.Errorf("文件过大 (%d bytes)，超过最大限制 %d bytes", len(content), MAX_FILE_SIZE)
 	}
 
 	originalText := string(content)
@@ -363,8 +399,13 @@ func editFileHandler(ctx context.Context, req *mcp.CallToolRequest, params EditP
 		return nil, EditResult{}, fmt.Errorf("编辑后内容过大 (%d bytes)，超过最大限制 %d bytes", len(newContentBytes), MAX_FILE_SIZE)
 	}
 
-	// 写回文件
-	if err := os.WriteFile(actualPath, newContentBytes, 0644); err != nil {
+	// 检查文件是否可写
+	if fileInfo.Mode().Perm()&0222 == 0 {
+		return nil, EditResult{}, fmt.Errorf("文件不可写: %s", actualPath)
+	}
+
+	// 使用原子操作写回文件
+	if err := atomicWriteFile(actualPath, newContentBytes, fileInfo.Mode().Perm()); err != nil {
 		return nil, EditResult{}, fmt.Errorf("Failed to write file: %w", err)
 	}
 
@@ -386,6 +427,11 @@ func globHandler(ctx context.Context, req *mcp.CallToolRequest, params GlobParam
 	// 验证必需参数
 	if params.Pattern == "" {
 		return nil, GlobResult{}, fmt.Errorf("pattern参数是必需的")
+	}
+
+	// 验证模式是否为空或只包含空白字符
+	if strings.TrimSpace(params.Pattern) == "" {
+		return nil, GlobResult{}, fmt.Errorf("模式不能为空或只包含空白字符")
 	}
 
 	// 从多个参数名中获取搜索路径
@@ -464,25 +510,25 @@ func globHandler(ctx context.Context, req *mcp.CallToolRequest, params GlobParam
 
 	// 应用分页
 	var pagedFiles []string
-	if params.Offset > 0 || params.HeadLimit > 0 {
-		start := params.Offset
-		if start < 0 {
-			start = 0
-		}
-		if start >= len(files) {
-			pagedFiles = []string{}
-		} else {
-			end := len(files)
-			if params.HeadLimit > 0 {
-				end = start + params.HeadLimit
-				if end > len(files) {
-					end = len(files)
-				}
-			}
-			pagedFiles = files[start:end]
-		}
+	start := params.Offset
+	if start < 0 {
+		start = 0
+	}
+
+	if start >= len(files) {
+		pagedFiles = []string{}
 	} else {
-		pagedFiles = files
+		end := len(files)
+		if params.HeadLimit > 0 {
+			end = start + params.HeadLimit
+			if end > len(files) {
+				end = len(files)
+			}
+		} else if params.HeadLimit < 0 {
+			// head_limit为负数时，忽略该参数
+			end = len(files)
+		}
+		pagedFiles = files[start:end]
 	}
 
 	// 应用token截断
@@ -510,9 +556,17 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 		outputMode = "content" // 默认输出模式
 	}
 
+	// 用于count模式的计数器
+	matchCount := 0
+
 	// 预先编译正则表达式，提高性能
 	var re *regexp.Regexp
 	if parseBool(params.Regex) {
+		// 检查正则表达式复杂度，防止ReDoS攻击
+		if err := isRegexComplexitySafe(params.Pattern); err != nil {
+			return nil, GrepResult{}, fmt.Errorf("正则表达式复杂度检查失败: %w", err)
+		}
+		
 		caseInsensitive := parseBool(params.IgnoreCase) || !parseBool(params.CaseSensitive)
 		var err error
 		if caseInsensitive {
@@ -551,7 +605,7 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 		}
 
 		lines := strings.Split(string(content), "\n")
-		searchLines(lines, params.Pattern, re, parseBool(params.CaseSensitive), parseBool(params.IgnoreCase), parseBool(params.Regex), actualPath, outputMode, parseBool(params.ShowLineNum), params.ContextBefore, params.ContextAfter, params.Context, &matches, &matchedFiles)
+		matchCount += searchLines(lines, params.Pattern, re, parseBool(params.CaseSensitive), parseBool(params.IgnoreCase), parseBool(params.Regex), actualPath, outputMode, parseBool(params.ShowLineNum), params.ContextBefore, params.ContextAfter, params.Context, &matches, &matchedFiles)
 	} else {
 		// 从参数中获取搜索路径
 		path := getSearchPath(params.Path)
@@ -605,7 +659,7 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 			}
 
 			lines := strings.Split(string(content), "\n")
-			searchLines(lines, params.Pattern, re, parseBool(params.CaseSensitive), parseBool(params.IgnoreCase), parseBool(params.Regex), path, outputMode, parseBool(params.ShowLineNum), params.ContextBefore, params.ContextAfter, params.Context, &matches, &matchedFiles)
+			matchCount += searchLines(lines, params.Pattern, re, parseBool(params.CaseSensitive), parseBool(params.IgnoreCase), parseBool(params.Regex), path, outputMode, parseBool(params.ShowLineNum), params.ContextBefore, params.ContextAfter, params.Context, &matches, &matchedFiles)
 
 			return nil
 		})
@@ -651,9 +705,15 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 		truncatedMatches = make([]string, 0)
 	}
 
+	// 对于count模式，返回实际的匹配计数而不是结果数量
+	resultCount := len(truncatedMatches)
+	if outputMode == "count" {
+		resultCount = matchCount
+	}
+
 	return nil, GrepResult{
 		Matches:   truncatedMatches,
-		Count:     len(truncatedMatches),
+		Count:     resultCount,
 		Truncated: wasTruncated,
 	}, nil
 }
@@ -780,6 +840,10 @@ func resolvePath(filePath, basePath string) (string, error) {
 		if strings.Contains(cleanPath, "..") {
 			return "", fmt.Errorf("路径包含非法字符 '..'")
 		}
+		// 执行安全路径检查
+		if err := isPathInSafeZone(cleanPath); err != nil {
+			return "", fmt.Errorf("安全路径检查失败: %w", err)
+		}
 		return cleanPath, nil
 	}
 
@@ -814,7 +878,8 @@ func resolvePath(filePath, basePath string) (string, error) {
 }
 
 // searchLines 在行中搜索，使用预编译的正则表达式
-func searchLines(lines []string, pattern string, re *regexp.Regexp, caseSensitive, ignoreCase bool, regex bool, filePath string, outputMode string, showLineNum bool, contextBefore, contextAfter, context int, matches *[]string, matchedFiles *map[string]bool) {
+// 返回匹配的行数
+func searchLines(lines []string, pattern string, re *regexp.Regexp, caseSensitive, ignoreCase bool, regex bool, filePath string, outputMode string, showLineNum bool, contextBefore, contextAfter, context int, matches *[]string, matchedFiles *map[string]bool) int {
 	// 确定大小写敏感性
 	caseInsensitive := ignoreCase || !caseSensitive
 
@@ -832,6 +897,10 @@ func searchLines(lines []string, pattern string, re *regexp.Regexp, caseSensitiv
 		searchPattern = strings.ToLower(pattern)
 	}
 
+	// 用于跟踪已经添加的行，防止重复添加
+	addedLines := make(map[int]bool)
+	matchCount := 0
+
 	for i, line := range lines {
 		var matched bool
 
@@ -848,6 +917,7 @@ func searchLines(lines []string, pattern string, re *regexp.Regexp, caseSensitiv
 		}
 
 		if matched {
+			matchCount++
 			if outputMode == "files_with_matches" {
 				(*matchedFiles)[filePath] = true
 			} else {
@@ -862,24 +932,30 @@ func searchLines(lines []string, pattern string, re *regexp.Regexp, caseSensitiv
 				}
 
 				for j := start; j < end; j++ {
-					contextLine := lines[j]
-					if showLineNum {
-						if j == i {
-							*matches = append(*matches, fmt.Sprintf("%s:%d: %s", filePath, j+1, contextLine))
+					// 检查是否已经添加过这一行
+					if !addedLines[j] {
+						contextLine := lines[j]
+						if showLineNum {
+							if j == i {
+								*matches = append(*matches, fmt.Sprintf("%s:%d: %s", filePath, j+1, contextLine))
+							} else {
+								*matches = append(*matches, fmt.Sprintf("%s:%d- %s", filePath, j+1, contextLine))
+							}
 						} else {
-							*matches = append(*matches, fmt.Sprintf("%s:%d- %s", filePath, j+1, contextLine))
+							*matches = append(*matches, contextLine)
 						}
-					} else {
-						*matches = append(*matches, contextLine)
+						addedLines[j] = true
 					}
 				}
 			}
 		}
 	}
+	
+	return matchCount
 }
 
 // isPathInSafeZone 检查路径是否在安全区域内
-// 注意：这个实现依赖于系统约定的安全目录，实际使用中可能需要根据具体需求调整
+// 增强安全路径检查，防止路径遍历攻击和访问系统关键文件
 func isPathInSafeZone(path string) error {
 	// 解析为绝对路径
 	absPath, err := filepath.Abs(path)
@@ -895,21 +971,203 @@ func isPathInSafeZone(path string) error {
 		return fmt.Errorf("路径包含非法字符 '..'")
 	}
 
-	// 在Linux系统中，通常我们需要限制访问特定安全目录
-	// 对于此实现，我们不强制限制在特定安全目录内，而是检查是否试图访问系统关键目录
-	// 但这可以通过环境变量或配置来自定义
+	// 检查路径是否为空
+	if cleanPath == "" || cleanPath == "/" {
+		return fmt.Errorf("路径不能为空或根目录")
+	}
+
+	// 检查符号链接
+	if isSymlink, err := isSymbolicLink(cleanPath); err == nil && isSymlink {
+		return fmt.Errorf("路径包含符号链接，可能存在安全风险: %s", cleanPath)
+	}
+
+	// 系统关键目录和文件保护
 	unsafePrefixes := []string{
 		"/proc",
 		"/sys",
-		"/dev",   // 这些可能需要根据具体需求调整
+		"/dev",
+		"/boot",
+		"/etc",
+		"/var/log",
+		"/usr/bin",
+		"/usr/sbin",
+		"/bin",
+		"/sbin",
+		"/lib",
+		"/lib64",
+		"/run",
+		"/tmp",
+		"/var/run",
+		"/var/tmp",
 	}
-	
+
+	// 系统关键文件
+	unsafeFiles := []string{
+		"/etc/passwd",
+		"/etc/shadow",
+		"/etc/sudoers",
+		"/etc/hosts",
+		"/etc/resolv.conf",
+		"/root/.ssh",
+		"/root/.bashrc",
+		"/root/.profile",
+		"/root/.bash_history",
+		"/etc/ssh/sshd_config",
+		"/etc/fstab",
+		"/etc/crontab",
+	}
+
+	// 检查路径是否以不安全前缀开头
 	for _, prefix := range unsafePrefixes {
-		// 检查路径是否以不安全前缀开头
 		if cleanPath == prefix || strings.HasPrefix(cleanPath, prefix+"/") {
-			return fmt.Errorf("尝试访问不安全路径: %s", cleanPath)
+			return fmt.Errorf("尝试访问系统关键目录: %s", cleanPath)
 		}
 	}
 
+	// 检查是否为系统关键文件
+	for _, unsafeFile := range unsafeFiles {
+		if cleanPath == unsafeFile {
+			return fmt.Errorf("尝试访问系统关键文件: %s", cleanPath)
+		}
+	}
+
+	// 检查路径深度，防止深层目录遍历
+	pathDepth := strings.Count(cleanPath, string(filepath.Separator))
+	if pathDepth > 20 {
+		return fmt.Errorf("路径深度过大 (%d)，可能存在安全风险", pathDepth)
+	}
+
+	// 检查路径是否包含危险字符
+	dangerousChars := []string{"~", "$", "|", "&", ";", "`"}
+	for _, char := range dangerousChars {
+		if strings.Contains(cleanPath, char) {
+			return fmt.Errorf("路径包含危险字符 '%s'", char)
+		}
+	}
+
+	// 检查路径是否在用户安全区域内
+	// 这里可以添加更多安全检查，比如限制在特定工作目录内
+
+	return nil
+}
+
+// isSymbolicLink 检查路径是否为符号链接
+func isSymbolicLink(path string) (bool, error) {
+	fileInfo, err := os.Lstat(path)
+	if err != nil {
+		// 如果文件不存在，返回false
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	
+	return fileInfo.Mode()&os.ModeSymlink != 0, nil
+}
+
+// atomicWriteFile 原子性地写入文件，防止数据损坏
+func atomicWriteFile(filePath string, data []byte, perm os.FileMode) error {
+	// 生成临时文件路径，使用随机后缀避免冲突
+	tempPath := filePath + "." + fmt.Sprintf("%d", time.Now().UnixNano()) + ".tmp"
+
+	// 检查临时文件是否已存在，如果存在则删除
+	if _, err := os.Stat(tempPath); err == nil {
+		os.Remove(tempPath)
+	}
+
+	// 写入临时文件
+	if err := os.WriteFile(tempPath, data, perm); err != nil {
+		// 失败时清理临时文件
+		os.Remove(tempPath)
+		return fmt.Errorf("failed to write temporary file: %w", err)
+	}
+
+	// 验证临时文件内容
+	tempContent, err := os.ReadFile(tempPath)
+	if err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("failed to verify temporary file: %w", err)
+	}
+
+	if len(tempContent) != len(data) {
+		os.Remove(tempPath)
+		return fmt.Errorf("temporary file verification failed: size mismatch")
+	}
+
+	// 原子性地重命名临时文件为目标文件
+	if err := os.Rename(tempPath, filePath); err != nil {
+		// 重命名失败时清理临时文件
+		os.Remove(tempPath)
+		return fmt.Errorf("failed to rename temporary file: %w", err)
+	}
+
+	return nil
+}
+
+// isRegexComplexitySafe 检查正则表达式复杂度，防止ReDoS攻击
+func isRegexComplexitySafe(pattern string) error {
+	// 检查模式长度
+	if len(pattern) > 1000 {
+		return fmt.Errorf("正则表达式过长 (%d 字符)，超过最大限制 1000 字符", len(pattern))
+	}
+	
+	// 检查嵌套量词深度
+	nestedQuantifierDepth := 0
+	maxNestedDepth := 0
+	inGroup := false
+	
+	for i := 0; i < len(pattern); i++ {
+		char := pattern[i]
+		
+		switch char {
+		case '(', '[', '{':
+			// 进入组或字符类
+			if char == '(' {
+				inGroup = true
+			}
+		case ')', ']', '}':
+			// 退出组或字符类
+			if char == ')' {
+				inGroup = false
+				if nestedQuantifierDepth > 0 {
+					nestedQuantifierDepth--
+				}
+			}
+		case '*', '+', '?':
+			// 量词字符
+			if inGroup {
+				nestedQuantifierDepth++
+				if nestedQuantifierDepth > maxNestedDepth {
+					maxNestedDepth = nestedQuantifierDepth
+				}
+				// 检查嵌套深度
+				if maxNestedDepth > 5 {
+					return fmt.Errorf("正则表达式嵌套深度过大 (%d)，可能造成ReDoS攻击", maxNestedDepth)
+				}
+			}
+		case '\\':
+			// 转义字符，跳过下一个字符
+			if i+1 < len(pattern) {
+				i++
+			}
+		}
+	}
+	
+	// 检查回溯爆炸模式
+	dangerousPatterns := []string{
+		"(a+)+$",
+		"(a|a)+$",
+		"(a*)*$",
+		"(.*)*$",
+		"(a+)*$",
+		"(.+)*$",
+	}
+	
+	for _, dangerous := range dangerousPatterns {
+		if strings.Contains(pattern, dangerous) {
+			return fmt.Errorf("检测到潜在ReDoS攻击模式: %s", dangerous)
+		}
+	}
+	
 	return nil
 }

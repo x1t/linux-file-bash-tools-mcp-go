@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -108,7 +109,19 @@ func (lb *LimitedBuffer) Write(p []byte) (n int, err error) {
 func (lb *LimitedBuffer) String() string {
 	lb.mutex.Lock()
 	defer lb.mutex.Unlock()
-	return string(lb.data)
+	// 创建副本以避免数据竞争
+	result := make([]byte, len(lb.data))
+	copy(result, lb.data)
+	return string(result)
+}
+
+// Bytes 返回缓冲区内容的字节副本
+func (lb *LimitedBuffer) Bytes() []byte {
+	lb.mutex.Lock()
+	defer lb.mutex.Unlock()
+	result := make([]byte, len(lb.data))
+	copy(result, lb.data)
+	return result
 }
 
 // Reset 清空缓冲区
@@ -116,6 +129,58 @@ func (lb *LimitedBuffer) Reset() {
 	lb.mutex.Lock()
 	defer lb.mutex.Unlock()
 	lb.data = lb.data[:0]
+}
+
+// cleanupCompletedProcesses 清理已完成的进程，防止内存泄漏
+func cleanupCompletedProcesses() {
+	processMutex.Lock()
+	defer processMutex.Unlock()
+	
+	completedPids := []int{}
+	for pid, processInfo := range backgroundProcesses {
+		select {
+		case <-processInfo.Done:
+			// 进程已完成，标记为待删除
+			completedPids = append(completedPids, pid)
+		default:
+			// 进程仍在运行
+		}
+	}
+	
+	// 删除已完成的进程
+	for _, pid := range completedPids {
+		delete(backgroundProcesses, pid)
+	}
+	
+	if len(completedPids) > 0 {
+		// 记录清理信息（生产环境中可以记录日志）
+		_ = len(completedPids) // 避免未使用变量警告
+	}
+}
+
+// startCleanupRoutine 启动定期清理协程
+func startCleanupRoutine() {
+	cleanupTicker = time.NewTicker(30 * time.Second) // 每30秒清理一次
+	cleanupDone = make(chan struct{})
+	
+	go func() {
+		for {
+			select {
+			case <-cleanupTicker.C:
+				cleanupCompletedProcesses()
+			case <-cleanupDone:
+				cleanupTicker.Stop()
+				return
+			}
+		}
+	}()
+}
+
+// stopCleanupRoutine 停止清理协程
+func stopCleanupRoutine() {
+	if cleanupDone != nil {
+		close(cleanupDone)
+	}
 }
 
 // ProcessInfo 存储后台进程信息
@@ -126,6 +191,20 @@ type ProcessInfo struct {
 	StartTime time.Time
 	Mutex     sync.Mutex
 	Done      chan struct{} // 用于通知进程结束
+	status    atomic.Value  // 原子状态："running", "completed", "failed"
+}
+
+// setStatus 设置进程状态（原子操作）
+func (pi *ProcessInfo) setStatus(status string) {
+	pi.status.Store(status)
+}
+
+// getStatus 获取进程状态（原子操作）
+func (pi *ProcessInfo) getStatus() string {
+	if status := pi.status.Load(); status != nil {
+		return status.(string)
+	}
+	return "running" // 默认状态
 }
 
 // 全局变量来跟踪后台进程
@@ -134,6 +213,9 @@ var (
 	processMutex        sync.Mutex
 	// ANSI转义序列正则表达式（ESC字符 + [ + 数字/分号 + m）
 	ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	// 清理定时器
+	cleanupTicker *time.Ticker
+	cleanupDone   chan struct{}
 )
 
 // cleanANSI 清理ANSI转义序列
@@ -155,6 +237,9 @@ func parseBool(value interface{}) bool {
 
 // AddBashTools 注册所有bash工具
 func AddBashTools(server *mcp.Server) {
+	// 启动定期清理协程
+	startCleanupRoutine()
+	
 	// Bash工具
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "bash",
@@ -172,6 +257,22 @@ func AddBashTools(server *mcp.Server) {
 		Name:        "kill_shell",
 		Description: "终止后台进程 - file-bash-tools.kill_shell (MCP)(shell_id: \"12345\") - 优雅终止进程",
 	}, killShellHandler)
+}
+
+// StopBashTools 停止bash工具相关资源
+func StopBashTools() {
+	stopCleanupRoutine()
+	
+	// 清理所有后台进程
+	processMutex.Lock()
+	defer processMutex.Unlock()
+	
+	for pid, processInfo := range backgroundProcesses {
+		if processInfo.Cmd.Process != nil {
+			processInfo.Cmd.Process.Kill()
+		}
+		delete(backgroundProcesses, pid)
+	}
 }
 
 // getShellCommand 根据操作系统获取正确的shell命令和参数
@@ -249,6 +350,7 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 			StartTime: startTime,
 			Done:      make(chan struct{}),
 		}
+		processInfo.setStatus("running") // 初始化状态
 
 		// 启动命令
 		if err := cmd.Start(); err != nil {
@@ -262,6 +364,7 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 
 		// 异步读取输出并缓存
 		go func() {
+			defer stdout.Close() // 确保管道被关闭
 			scanner := bufio.NewScanner(stdout)
 			for scanner.Scan() {
 				line := scanner.Text() + "\n"
@@ -270,6 +373,7 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 		}()
 
 		go func() {
+			defer stderr.Close() // 确保管道被关闭
 			scanner := bufio.NewScanner(stderr)
 			for scanner.Scan() {
 				line := scanner.Text() + "\n"
@@ -277,7 +381,6 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 			}
 		}()
 
-		// 异步等待进程结束或超时，完成后通知
 		// 异步等待进程结束或超时，完成后通知
 		go func() {
 			// 创建带超时的context
@@ -290,19 +393,31 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 			}()
 			
 			select {
-			case <-done:
+			case err := <-done:
 				// 进程正常结束
+				if err != nil {
+					processInfo.setStatus("failed")
+				} else {
+					processInfo.setStatus("completed")
+				}
 			case <-ctx.Done():
 				// 超时，终止进程
-				cmd.Process.Kill()
+				if cmd.Process != nil {
+					cmd.Process.Kill()
+				}
+				processInfo.setStatus("failed") // 超时终止视为失败
 			}
 			
 			// 进程结束后，将进程信息标记为完成
 			close(processInfo.Done)
 			
 			// 从跟踪列表中删除进程，这个操作需要在锁的保护下完成
+			// 使用原子状态检查避免竞态条件
 			processMutex.Lock()
-			delete(backgroundProcesses, cmd.Process.Pid)
+			// 再次检查进程是否仍在映射中（可能已被其他操作删除）
+			if _, exists := backgroundProcesses[cmd.Process.Pid]; exists {
+				delete(backgroundProcesses, cmd.Process.Pid)
+			}
 			processMutex.Unlock()
 		}()
 
@@ -323,7 +438,10 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd.Start()
+	// 启动命令
+	if err := cmd.Start(); err != nil {
+		return nil, BashResult{}, fmt.Errorf("Failed to start command: %w", err)
+	}
 
 	done := make(chan error, 1)
 	go func() {
@@ -337,7 +455,9 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 		// 命令正常完成
 	case <-ctx.Done():
 		// 超时，终止进程
-		cmd.Process.Kill()
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
 		err = fmt.Errorf("Command execution timed out")
 		killed = true
 	}
@@ -394,7 +514,7 @@ func bashOutputHandler(ctx context.Context, req *mcp.CallToolRequest, params Bas
 		return nil, BashOutputResult{}, fmt.Errorf("Background process with bash_id %s not found", params.BashID)
 	}
 
-	// 读取当前输出
+	// 读取当前输出（使用线程安全的方法）
 	stdout := cleanANSI(processInfo.Stdout.String())
 	stderr := cleanANSI(processInfo.Stderr.String())
 
@@ -422,29 +542,33 @@ func bashOutputHandler(ctx context.Context, req *mcp.CallToolRequest, params Bas
 		}
 	}
 
-	// 检查进程状态 - 非阻塞方式
-	status := "running"
+	// 检查进程状态 - 使用原子状态避免竞态条件
+	status := processInfo.getStatus()
 	var exitCode int
 
-	// 检查进程是否已经结束（使用Done channel进行非阻塞检查）
-	select {
-	case <-processInfo.Done:
+	// 如果状态不是running，说明进程已经结束
+	if status != "running" {
 		// 进程已经结束，获取退出码
 		if processInfo.Cmd.ProcessState != nil {
 			exitCode = processInfo.Cmd.ProcessState.ExitCode()
 		} else {
 			exitCode = 1 // 假设非正常退出
 		}
-		
-		// 确定状态
-		if processInfo.Cmd.ProcessState != nil && processInfo.Cmd.ProcessState.Success() {
-			status = "completed"
-		} else {
-			status = "failed"
+	} else {
+		// 进程仍在运行，使用非阻塞方式检查是否结束
+		select {
+		case <-processInfo.Done:
+			// 进程刚刚结束，更新状态
+			status = processInfo.getStatus()
+			if processInfo.Cmd.ProcessState != nil {
+				exitCode = processInfo.Cmd.ProcessState.ExitCode()
+			} else {
+				exitCode = 1
+			}
+		default:
+			// 进程仍在运行
+			status = "running"
 		}
-	default:
-		// 进程仍在运行
-		status = "running"
 	}
 
 	processMutex.Unlock()
@@ -476,12 +600,18 @@ func killShellHandler(ctx context.Context, req *mcp.CallToolRequest, params Kill
 		return nil, KillShellResult{}, fmt.Errorf("Background process with shell_id %s not found", params.ShellID)
 	}
 
+	// 检查进程是否仍在运行
+	if processInfo.Cmd.Process == nil {
+		processMutex.Unlock()
+		return nil, KillShellResult{}, fmt.Errorf("Process with shell_id %s is not running or already terminated", params.ShellID)
+	}
+
 	// 尝试终止进程 (先尝试优雅终止，失败则强制终止)
+	var killErr error
 	if err := processInfo.Cmd.Process.Signal(os.Interrupt); err != nil {
 		// 如果中断信号失败，强制终止
 		if err := processInfo.Cmd.Process.Kill(); err != nil {
-			processMutex.Unlock()
-			return nil, KillShellResult{}, fmt.Errorf("Failed to kill process: %w", err)
+			killErr = err
 		}
 	}
 
@@ -496,12 +626,22 @@ func killShellHandler(ctx context.Context, req *mcp.CallToolRequest, params Kill
 		// 进程已终止
 	case <-time.After(5 * time.Second):
 		// 超时，强制终止进程
-		_ = processInfo.Cmd.Process.Kill()
+		if processInfo.Cmd.Process != nil {
+			_ = processInfo.Cmd.Process.Kill()
+		}
 	}
 
 	// 从跟踪列表中删除，如果进程还未结束则会由goroutine处理
 	delete(backgroundProcesses, pid)
 	processMutex.Unlock()
+
+	// 如果有终止错误，返回错误信息
+	if killErr != nil {
+		return nil, KillShellResult{
+			Message: fmt.Sprintf("Process with shell_id %s terminated with warnings: %v", params.ShellID, killErr),
+			ShellID: params.ShellID,
+		}, nil
+	}
 
 	return nil, KillShellResult{
 		Message: fmt.Sprintf("Successfully killed background process with shell_id: %s", params.ShellID),
