@@ -117,6 +117,8 @@ const (
 	MAX_TOKENS = 8000
 	// 估算token数量：大致按照字符数/4来估算（1个token约等于4个英文字符或2个中文字符）
 	TOKEN_ESTIMATE_RATIO = 4
+	// 最大文件大小（字节），防止读取过大的文件导致内存问题
+	MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 )
 
 // AddFileTools 注册所有文件操作工具
@@ -162,6 +164,22 @@ func readFileHandler(ctx context.Context, req *mcp.CallToolRequest, params ReadP
 	// 验证文件路径是绝对路径
 	if !filepath.IsAbs(params.FilePath) {
 		return nil, ReadResult{}, fmt.Errorf("file_path must be an absolute path")
+	}
+
+	// 执行安全路径检查
+	if err := isPathInSafeZone(params.FilePath); err != nil {
+		return nil, ReadResult{}, fmt.Errorf("安全路径检查失败: %w", err)
+	}
+
+	// 检查文件大小，防止读取过大的文件
+	fileInfo, err := os.Stat(params.FilePath)
+	if err != nil {
+		// 如果文件不存在，保留原来的错误消息
+		return nil, ReadResult{}, fmt.Errorf("Failed to read file: %w", err)
+	}
+
+	if fileInfo.Size() > MAX_FILE_SIZE {
+		return nil, ReadResult{}, fmt.Errorf("文件过大 (%d bytes)，超过最大限制 %d bytes", fileInfo.Size(), MAX_FILE_SIZE)
 	}
 
 	// 读取文件
@@ -247,6 +265,17 @@ func writeFileHandler(ctx context.Context, req *mcp.CallToolRequest, params Writ
 		return nil, WriteResult{}, fmt.Errorf("file_path must be an absolute path")
 	}
 
+	// 执行安全路径检查
+	if err := isPathInSafeZone(params.FilePath); err != nil {
+		return nil, WriteResult{}, fmt.Errorf("安全路径检查失败: %w", err)
+	}
+
+	// 检查写入内容的大小，防止写入过大的文件
+	contentBytes := []byte(params.Content)
+	if len(contentBytes) > MAX_FILE_SIZE {
+		return nil, WriteResult{}, fmt.Errorf("内容过大 (%d bytes)，超过最大限制 %d bytes", len(contentBytes), MAX_FILE_SIZE)
+	}
+
 	// 确保目录存在
 	dir := filepath.Dir(params.FilePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -254,7 +283,6 @@ func writeFileHandler(ctx context.Context, req *mcp.CallToolRequest, params Writ
 	}
 
 	// 写入文件
-	contentBytes := []byte(params.Content)
 	if err := os.WriteFile(params.FilePath, contentBytes, 0644); err != nil {
 		return nil, WriteResult{}, fmt.Errorf("Failed to write file: %w", err)
 	}
@@ -290,10 +318,20 @@ func editFileHandler(ctx context.Context, req *mcp.CallToolRequest, params EditP
 		return nil, EditResult{}, fmt.Errorf("Failed to resolve path: %w", err)
 	}
 
+	// 执行安全路径检查
+	if err := isPathInSafeZone(actualPath); err != nil {
+		return nil, EditResult{}, fmt.Errorf("安全路径检查失败: %w", err)
+	}
+
 	// 读取原文件
 	content, err := os.ReadFile(actualPath)
 	if err != nil {
 		return nil, EditResult{}, fmt.Errorf("Failed to read file: %w", err)
+	}
+
+	// 检查原始文件大小，防止处理过大的文件
+	if len(content) > MAX_FILE_SIZE {
+		return nil, EditResult{}, fmt.Errorf("文件过大 (%d bytes)，超过最大限制 %d bytes", len(content), MAX_FILE_SIZE)
 	}
 
 	originalText := string(content)
@@ -319,8 +357,14 @@ func editFileHandler(ctx context.Context, req *mcp.CallToolRequest, params EditP
 		return nil, EditResult{}, fmt.Errorf("old_string '%s' not found in file", params.OldString)
 	}
 
+	// 检查编辑后内容的大小，防止写入过大的文件
+	newContentBytes := []byte(newText)
+	if len(newContentBytes) > MAX_FILE_SIZE {
+		return nil, EditResult{}, fmt.Errorf("编辑后内容过大 (%d bytes)，超过最大限制 %d bytes", len(newContentBytes), MAX_FILE_SIZE)
+	}
+
 	// 写回文件
-	if err := os.WriteFile(actualPath, []byte(newText), 0644); err != nil {
+	if err := os.WriteFile(actualPath, newContentBytes, 0644); err != nil {
 		return nil, EditResult{}, fmt.Errorf("Failed to write file: %w", err)
 	}
 
@@ -339,6 +383,11 @@ func editFileHandler(ctx context.Context, req *mcp.CallToolRequest, params EditP
 
 // globHandler 处理glob匹配请求
 func globHandler(ctx context.Context, req *mcp.CallToolRequest, params GlobParams) (*mcp.CallToolResult, GlobResult, error) {
+	// 验证必需参数
+	if params.Pattern == "" {
+		return nil, GlobResult{}, fmt.Errorf("pattern参数是必需的")
+	}
+
 	// 从多个参数名中获取搜索路径
 	path := getSearchPath(params.Path, params.Path1)
 
@@ -348,6 +397,21 @@ func globHandler(ctx context.Context, req *mcp.CallToolRequest, params GlobParam
 		return nil, GlobResult{}, fmt.Errorf("解析搜索路径失败: %w", err)
 	}
 
+	// 验证搜索路径是否存在且为目录
+	info, err := os.Stat(searchPath)
+	if err != nil {
+		return nil, GlobResult{}, fmt.Errorf("搜索路径不存在: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, GlobResult{}, fmt.Errorf("搜索路径必须是目录: %s", searchPath)
+	}
+
+	// 验证模式是否有效
+	_, err = doublestar.Match(params.Pattern, "test")
+	if err != nil {
+		return nil, GlobResult{}, fmt.Errorf("无效的glob模式: %w", err)
+	}
+
 	// 确保files不为nil
 	files := make([]string, 0)
 	fileInfos := make(map[string]fs.FileInfo)
@@ -355,7 +419,8 @@ func globHandler(ctx context.Context, req *mcp.CallToolRequest, params GlobParam
 	// 使用Walk遍历目录
 	err = filepath.WalkDir(searchPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			// 跳过无法访问的文件/目录，而不是失败整个操作
+			return nil
 		}
 
 		// 跳过目录，只处理文件
@@ -373,7 +438,7 @@ func globHandler(ctx context.Context, req *mcp.CallToolRequest, params GlobParam
 		// 使用 doublestar 进行高级模式匹配，支持 ** 等复杂模式
 		matched, err := doublestar.Match(params.Pattern, relPath)
 		if err != nil {
-			// 如果模式无效，跳过
+			// 如果模式无效，跳过（实际上上面已经验证过模式，所以这里不应该发生）
 			return nil
 		}
 		if matched {
@@ -386,10 +451,6 @@ func globHandler(ctx context.Context, req *mcp.CallToolRequest, params GlobParam
 
 		return nil
 	})
-
-	if err != nil {
-		return nil, GlobResult{}, fmt.Errorf("glob匹配失败: %w", err)
-	}
 
 	// 按修改时间排序（最新的在前）- 使用更高效的排序算法
 	sort.Slice(files, func(i, j int) bool {
@@ -436,6 +497,11 @@ func globHandler(ctx context.Context, req *mcp.CallToolRequest, params GlobParam
 
 // grepHandler 处理搜索请求
 func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParams) (*mcp.CallToolResult, GrepResult, error) {
+	// 验证必需参数
+	if params.Pattern == "" {
+		return nil, GrepResult{}, fmt.Errorf("pattern参数是必需的")
+	}
+
 	// 确保matches不为nil
 	matches := make([]string, 0)
 	matchedFiles := make(map[string]bool)
@@ -470,6 +536,15 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 			return nil, GrepResult{}, fmt.Errorf("解析文件路径失败: %w", err)
 		}
 
+		// 验证文件是否存在
+		info, err := os.Stat(actualPath)
+		if err != nil {
+			return nil, GrepResult{}, fmt.Errorf("文件不存在: %w", err)
+		}
+		if info.IsDir() {
+			return nil, GrepResult{}, fmt.Errorf("指定路径是目录，不是文件: %s", actualPath)
+		}
+
 		content, err := os.ReadFile(actualPath)
 		if err != nil {
 			return nil, GrepResult{}, fmt.Errorf("读取文件失败: %w", err)
@@ -487,14 +562,40 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 			return nil, GrepResult{}, fmt.Errorf("解析搜索路径失败: %w", err)
 		}
 
+		// 验证搜索路径是否存在且为目录
+		info, err := os.Stat(searchPath)
+		if err != nil {
+			return nil, GrepResult{}, fmt.Errorf("搜索路径不存在: %w", err)
+		}
+		if !info.IsDir() {
+			return nil, GrepResult{}, fmt.Errorf("搜索路径必须是目录: %s", searchPath)
+		}
+
 		err = filepath.WalkDir(searchPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				return err
+				// 跳过无法访问的文件/目录，而不是失败整个操作
+				return nil
 			}
 
 			// 跳过目录
 			if d.IsDir() {
 				return nil
+			}
+
+			// 应用文件扩展名过滤
+			if params.FileType != "" {
+				ext := strings.TrimPrefix(filepath.Ext(path), ".")
+				if ext != params.FileType {
+					return nil // 跳过不匹配的文件类型
+				}
+			}
+
+			// 如果指定了glob模式，也应用glob过滤
+			if params.GlobPattern != "" {
+				matched, err := doublestar.Match(params.GlobPattern, path)
+				if err != nil || !matched {
+					return nil // 跳过不匹配的文件
+				}
 			}
 
 			// 读取文件并搜索
@@ -509,9 +610,7 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 			return nil
 		})
 
-		if err != nil {
-			return nil, GrepResult{}, fmt.Errorf("搜索失败: %w", err)
-		}
+		// 错误处理已移至walk函数中忽略，这里不需要返回错误
 	}
 
 	// 如果output_mode是files_with_matches，将匹配的文件列表转换为matches
@@ -676,16 +775,42 @@ func parseLineNumber(s string, totalLines int) (int, error) {
 func resolvePath(filePath, basePath string) (string, error) {
 	// 如果是绝对路径，直接返回
 	if filepath.IsAbs(filePath) {
-		return filepath.Clean(filePath), nil
+		// 清理路径并验证是否存在路径遍历
+		cleanPath := filepath.Clean(filePath)
+		if strings.Contains(cleanPath, "..") {
+			return "", fmt.Errorf("路径包含非法字符 '..'")
+		}
+		return cleanPath, nil
 	}
 
 	// 如果提供了基准路径，使用基准路径
 	if basePath != "" {
-		return filepath.Abs(filepath.Join(basePath, filePath))
+		// 清理并验证基准路径
+		cleanBasePath := filepath.Clean(basePath)
+		if strings.Contains(cleanBasePath, "..") {
+			return "", fmt.Errorf("基准路径包含非法字符 '..'")
+		}
+		
+		// 确保最终路径在基准路径内部
+		joinedPath := filepath.Join(cleanBasePath, filePath)
+		cleanPath := filepath.Clean(joinedPath)
+		
+		// 检查规范化路径是否仍在基准路径内
+		relPath, err := filepath.Rel(cleanBasePath, cleanPath)
+		if err != nil || strings.HasPrefix(relPath, "..") {
+			return "", fmt.Errorf("路径遍历攻击检测: 尝试访问基准路径外的文件")
+		}
+		
+		return cleanPath, nil
 	}
 
 	// 否则使用当前工作目录
-	return filepath.Abs(filePath)
+	cleanPath := filepath.Clean(filePath)
+	if strings.Contains(cleanPath, "..") {
+		return "", fmt.Errorf("路径包含非法字符 '..'")
+	}
+	
+	return filepath.Abs(cleanPath)
 }
 
 // searchLines 在行中搜索，使用预编译的正则表达式
@@ -751,4 +876,40 @@ func searchLines(lines []string, pattern string, re *regexp.Regexp, caseSensitiv
 			}
 		}
 	}
+}
+
+// isPathInSafeZone 检查路径是否在安全区域内
+// 注意：这个实现依赖于系统约定的安全目录，实际使用中可能需要根据具体需求调整
+func isPathInSafeZone(path string) error {
+	// 解析为绝对路径
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("无法解析绝对路径: %w", err)
+	}
+
+	// 清理路径
+	cleanPath := filepath.Clean(absPath)
+
+	// 检查是否包含路径遍历序列
+	if strings.Contains(cleanPath, "..") {
+		return fmt.Errorf("路径包含非法字符 '..'")
+	}
+
+	// 在Linux系统中，通常我们需要限制访问特定安全目录
+	// 对于此实现，我们不强制限制在特定安全目录内，而是检查是否试图访问系统关键目录
+	// 但这可以通过环境变量或配置来自定义
+	unsafePrefixes := []string{
+		"/proc",
+		"/sys",
+		"/dev",   // 这些可能需要根据具体需求调整
+	}
+	
+	for _, prefix := range unsafePrefixes {
+		// 检查路径是否以不安全前缀开头
+		if cleanPath == prefix || strings.HasPrefix(cleanPath, prefix+"/") {
+			return fmt.Errorf("尝试访问不安全路径: %s", cleanPath)
+		}
+	}
+
+	return nil
 }

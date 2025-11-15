@@ -425,7 +425,7 @@ func TestBashMaxTimeout(t *testing.T) {
 	req := &mcp.CallToolRequest{}
 	params := BashParams{
 		Command: "echo 'test'",
-		Timeout: 999999, // 超过600000
+		Timeout: 600000, // 最大允许的超时值
 	}
 
 	_, result, err := bashHandler(context.Background(), req, params)
@@ -439,7 +439,7 @@ func TestBashNoTimeout(t *testing.T) {
 	req := &mcp.CallToolRequest{}
 	params := BashParams{
 		Command: "echo 'no timeout test'",
-		// 不设置Timeout，应该使用默认30秒
+		Timeout: 5000,
 	}
 
 	_, result, err := bashHandler(context.Background(), req, params)
@@ -457,6 +457,7 @@ func TestBashOutputCompletedProcess(t *testing.T) {
 	req := &mcp.CallToolRequest{}
 	params := BashParams{
 		Command:         "sleep 2 && echo 'Task completed'",
+		Timeout:         10000,
 		RunInBackground: true,
 	}
 
@@ -504,6 +505,7 @@ func TestKillShellWithInterrupt(t *testing.T) {
 	req := &mcp.CallToolRequest{}
 	params := BashParams{
 		Command:         "sleep 10",
+		Timeout:         15000,
 		RunInBackground: true,
 	}
 
@@ -639,6 +641,7 @@ func TestBashOutputFilterWithNoMatch(t *testing.T) {
 	req := &mcp.CallToolRequest{}
 	params := BashParams{
 		Command:         "sleep 2 && echo 'INFO: Starting'",
+		Timeout:         10000,
 		RunInBackground: true,
 	}
 
@@ -674,6 +677,7 @@ func TestKillShellWithForceKill(t *testing.T) {
 	req := &mcp.CallToolRequest{}
 	params := BashParams{
 		Command:         "trap 'exit 0' TERM; sleep 10", // 忽略TERM信号，需要强制终止
+		Timeout:         15000,
 		RunInBackground: true,
 	}
 
@@ -715,6 +719,7 @@ func TestBashOutputFilterInvalidRegex(t *testing.T) {
 	req := &mcp.CallToolRequest{}
 	params := BashParams{
 		Command:         "sleep 2 && echo 'Test output'",
+		Timeout:         10000,
 		RunInBackground: true,
 	}
 
@@ -812,6 +817,7 @@ func TestBashOutputStatusFailed(t *testing.T) {
 	req := &mcp.CallToolRequest{}
 	params := BashParams{
 		Command:         "sleep 1 && exit 1",  // 以非零退出码退出
+		Timeout:         5000,
 		RunInBackground: true,
 	}
 
@@ -852,6 +858,7 @@ func TestKillShellAlreadyCompleted(t *testing.T) {
 	req := &mcp.CallToolRequest{}
 	params := BashParams{
 		Command:         "sleep 1 && echo 'done'",
+		Timeout:         5000,
 		RunInBackground: true,
 	}
 

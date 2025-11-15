@@ -28,7 +28,7 @@ type LimitedBuffer struct {
 type BashParams struct {
 	Command         string      `json:"command" jsonschema:"Shell command to execute"`
 	Description     string      `json:"description,omitempty" jsonschema:"5-10 word brief description of command functionality"`
-	Timeout         int         `json:"timeout,omitempty" jsonschema:"Optional timeout in milliseconds (max 600000)"`
+	Timeout         int         `json:"timeout" jsonschema:"Required timeout in milliseconds (max 600000)"`
 	RunInBackground bool        `json:"run_in_background,omitempty" jsonschema:"Set to true to run command in background"`
 }
 
@@ -158,7 +158,7 @@ func AddBashTools(server *mcp.Server) {
 	// Bash工具
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "bash",
-		Description: "执行shell命令 - file-bash-tools.bash (MCP)(command: \"ls -la\", run_in_background: \"false\") - 支持后台执行",
+		Description: "执行shell命令 - file-bash-tools.bash (MCP)(command: \"ls -la\", timeout: 30000, run_in_background: \"false\") - 支持后台执行，timeout是必需参数（毫秒）",
 	}, bashHandler)
 
 	// BashOutput工具
@@ -209,16 +209,17 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 		return nil, BashResult{}, fmt.Errorf("command parameter is required")
 	}
 
+	// 验证timeout参数 - 必需参数且在有效范围内
+	if params.Timeout <= 0 || params.Timeout > 600000 {
+		return nil, BashResult{}, fmt.Errorf("timeout parameter is required and must be between 1 and 600000 milliseconds")
+	}
+
 	// 设置超时时间（todo.md标准使用毫秒，最大600000毫秒=600秒）
 	var timeout time.Duration
-	if params.Timeout > 0 {
-		if params.Timeout > 600000 {
-			timeout = 600000 * time.Millisecond // 最大600秒
-		} else {
-			timeout = time.Duration(params.Timeout) * time.Millisecond
-		}
+	if params.Timeout > 600000 {
+		timeout = 600000 * time.Millisecond // 最大600秒
 	} else {
-		timeout = 30000 * time.Millisecond // 默认30秒
+		timeout = time.Duration(params.Timeout) * time.Millisecond
 	}
 
 	startTime := time.Now()
@@ -276,9 +277,26 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 			}
 		}()
 
-		// 异步等待进程结束，完成后通知
+		// 异步等待进程结束或超时，完成后通知
+		// 异步等待进程结束或超时，完成后通知
 		go func() {
-			_ = cmd.Wait()
+			// 创建带超时的context
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			
+			done := make(chan error, 1)
+			go func() {
+				done <- cmd.Wait()
+			}()
+			
+			select {
+			case <-done:
+				// 进程正常结束
+			case <-ctx.Done():
+				// 超时，终止进程
+				cmd.Process.Kill()
+			}
+			
 			// 进程结束后，将进程信息标记为完成
 			close(processInfo.Done)
 			
