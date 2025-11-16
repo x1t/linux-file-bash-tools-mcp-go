@@ -996,7 +996,6 @@ func isPathInSafeZone(path string) error {
 		"/lib",
 		"/lib64",
 		"/run",
-		"/tmp",
 		"/var/run",
 		"/var/tmp",
 	}
