@@ -20,17 +20,17 @@ import (
 
 // LimitedBuffer 实现一个带限制的缓冲区，防止无限内存增长
 type LimitedBuffer struct {
-	data     []byte
-	maxSize  int
-	mutex    sync.Mutex
+	data    []byte
+	maxSize int
+	mutex   sync.Mutex
 }
 
 // BashParams 定义bash命令参数 (完全符合todo.md标准)
 type BashParams struct {
-	Command         string      `json:"command" jsonschema:"Shell command to execute"`
-	Description     string      `json:"description,omitempty" jsonschema:"5-10 word brief description of command functionality"`
-	Timeout         int         `json:"timeout" jsonschema:"Required timeout in milliseconds (max 600000)"`
-	RunInBackground bool        `json:"run_in_background,omitempty" jsonschema:"Set to true to run command in background"`
+	Command         string `json:"command" jsonschema:"Shell command to execute"`
+	Description     string `json:"description,omitempty" jsonschema:"5-10 word brief description of command functionality"`
+	Timeout         int    `json:"timeout" jsonschema:"Required timeout in milliseconds (max 600000)"`
+	RunInBackground bool   `json:"run_in_background,omitempty" jsonschema:"Set to true to run command in background"`
 }
 
 // BashOutputParams 定义获取bash输出参数 (完全符合todo.md标准)
@@ -46,22 +46,22 @@ type KillShellParams struct {
 
 // BashResult 定义bash执行结果 (完全符合todo.md标准)
 type BashResult struct {
-	Output   string `json:"output"`     // Combined stdout and stderr
-	ExitCode int    `json:"exitCode"`   // Command exit code
-	Killed   bool   `json:"killed"`     // Whether command was killed due to timeout
+	Output   string `json:"output"`            // Combined stdout and stderr
+	ExitCode int    `json:"exitCode"`          // Command exit code
+	Killed   bool   `json:"killed"`            // Whether command was killed due to timeout
 	ShellID  string `json:"shellId,omitempty"` // Shell ID for background processes
 }
 
 // BashOutputResult 定义获取输出的结果 (完全符合todo.md标准)
 type BashOutputResult struct {
-	Output   string `json:"output"`                     // New output since last check
-	Status   string `json:"status"`                     // 'running' | 'completed' | 'failed'
-	ExitCode int    `json:"exitCode,omitempty"`         // Exit code when completed
+	Output   string `json:"output"`             // New output since last check
+	Status   string `json:"status"`             // 'running' | 'completed' | 'failed'
+	ExitCode int    `json:"exitCode,omitempty"` // Exit code when completed
 }
 
 // KillShellResult 定义终止进程结果 (完全符合todo.md标准)
 type KillShellResult struct {
-	Message string `json:"message"`   // Success message
+	Message string `json:"message"`  // Success message
 	ShellID string `json:"shell_id"` // Shell ID of the killed process
 }
 
@@ -77,7 +77,7 @@ func NewLimitedBuffer(maxSize int) *LimitedBuffer {
 func (lb *LimitedBuffer) Write(p []byte) (n int, err error) {
 	lb.mutex.Lock()
 	defer lb.mutex.Unlock()
-	
+
 	newLen := len(lb.data) + len(p)
 	if newLen <= lb.maxSize {
 		// 如果新数据长度未超过限制，直接追加
@@ -101,7 +101,7 @@ func (lb *LimitedBuffer) Write(p []byte) (n int, err error) {
 			lb.data = append(lb.data, p...)
 		}
 	}
-	
+
 	return len(p), nil
 }
 
@@ -135,7 +135,7 @@ func (lb *LimitedBuffer) Reset() {
 func cleanupCompletedProcesses() {
 	processMutex.Lock()
 	defer processMutex.Unlock()
-	
+
 	completedPids := []int{}
 	for pid, processInfo := range backgroundProcesses {
 		select {
@@ -146,12 +146,12 @@ func cleanupCompletedProcesses() {
 			// 进程仍在运行
 		}
 	}
-	
+
 	// 删除已完成的进程
 	for _, pid := range completedPids {
 		delete(backgroundProcesses, pid)
 	}
-	
+
 	if len(completedPids) > 0 {
 		// 记录清理信息（生产环境中可以记录日志）
 		_ = len(completedPids) // 避免未使用变量警告
@@ -162,7 +162,7 @@ func cleanupCompletedProcesses() {
 func startCleanupRoutine() {
 	cleanupTicker = time.NewTicker(30 * time.Second) // 每30秒清理一次
 	cleanupDone = make(chan struct{})
-	
+
 	go func() {
 		for {
 			select {
@@ -239,7 +239,7 @@ func parseBool(value interface{}) bool {
 func AddBashTools(server *mcp.Server) {
 	// 启动定期清理协程
 	startCleanupRoutine()
-	
+
 	// Bash工具
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "bash",
@@ -262,11 +262,11 @@ func AddBashTools(server *mcp.Server) {
 // StopBashTools 停止bash工具相关资源
 func StopBashTools() {
 	stopCleanupRoutine()
-	
+
 	// 清理所有后台进程
 	processMutex.Lock()
 	defer processMutex.Unlock()
-	
+
 	for pid, processInfo := range backgroundProcesses {
 		if processInfo.Cmd.Process != nil {
 			processInfo.Cmd.Process.Kill()
@@ -386,12 +386,12 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 			// 创建带超时的context
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
-			
+
 			done := make(chan error, 1)
 			go func() {
 				done <- cmd.Wait()
 			}()
-			
+
 			select {
 			case err := <-done:
 				// 进程正常结束
@@ -407,10 +407,10 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 				}
 				processInfo.setStatus("failed") // 超时终止视为失败
 			}
-			
+
 			// 进程结束后，将进程信息标记为完成
 			close(processInfo.Done)
-			
+
 			// 从跟踪列表中删除进程，这个操作需要在锁的保护下完成
 			// 使用原子状态检查避免竞态条件
 			processMutex.Lock()
