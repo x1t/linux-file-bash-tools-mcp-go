@@ -45,9 +45,6 @@ builds:
       - -X main.GitCommit={{ .Commit }}
     binary: mcp-file-tools_linux_arm64
 
-# Disable archives to publish binaries directly
-archives: []
-
 release:
   github:
     owner: x1t
