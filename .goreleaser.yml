@@ -1,0 +1,65 @@
+# .goreleaser.yml
+# Build configuration for musl static binaries
+
+project_name: mcp-file-tools
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: linux-amd64-musl
+    goos: linux
+    goarch: amd64
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -tags netgo,osusergo
+    ldflags:
+      - -s -w
+        -X main.Version={{ .Version }}
+        -X main.BuildTime={{ .Timestamp }}
+        -X main.GitCommit={{ .Commit }}
+    binary: mcp-file-tools
+    description: MCP File-Bash Tools Server (Linux AMD64)
+
+  - id: linux-arm64-musl
+    goos: linux
+    goarch: arm64
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -tags netgo,osusergo
+    ldflags:
+      - -s -w
+        -X main.Version={{ .Version }}
+        -X main.BuildTime={{ .Timestamp }}
+        -X main.GitCommit={{ .Commit }}
+    binary: mcp-file-tools
+    description: MCP File-Bash Tools Server (Linux ARM64)
+
+archives:
+  - name_template: '{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}'
+    format: plain
+    files:
+      - none
+
+release:
+  github:
+    owner: x1t
+    name: linux-file-bash-tools-mcp-go
+
+  draft: false
+  prerelease: false
+  make_latest: true
+
+  # Disable archive creation, upload binaries directly
+  # GoReleaser will upload the binaries from builds section
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+announce:
+  twitter:
+    enabled: false
