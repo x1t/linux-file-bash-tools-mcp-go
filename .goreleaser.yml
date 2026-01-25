@@ -48,7 +48,6 @@ builds:
 archives:
   - name_template: '{{ .Binary }}'
     files: []
-    wrap_in_shell: false
 
 release:
   github:
