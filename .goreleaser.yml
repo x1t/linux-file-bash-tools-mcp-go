@@ -1,5 +1,8 @@
 # .goreleaser.yml
 # Build configuration for musl static binaries
+# GoReleaser v2 configuration
+
+version: 2
 
 project_name: mcp-file-tools
 
