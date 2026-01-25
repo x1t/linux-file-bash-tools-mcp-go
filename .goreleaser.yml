@@ -6,6 +6,10 @@ version: 2
 
 project_name: mcp-file-tools
 
+archives:
+  - formats:
+      - zip
+
 before:
   hooks:
     - go mod tidy
