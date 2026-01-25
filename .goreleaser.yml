@@ -26,7 +26,8 @@ builds:
       - -X main.Version={{ .Version }}
       - -X main.BuildTime={{ .Timestamp }}
       - -X main.GitCommit={{ .Commit }}
-    binary: mcp-file-tools_{{ .Os }}_{{ .Arch }}
+    binary: mcp-file-tools_linux_amd64
+    打包: false
 
   - id: linux-arm64-musl
     goos:
@@ -43,11 +44,10 @@ builds:
       - -X main.Version={{ .Version }}
       - -X main.BuildTime={{ .Timestamp }}
       - -X main.GitCommit={{ .Commit }}
-    binary: mcp-file-tools_{{ .Os }}_{{ .Arch }}
+    binary: mcp-file-tools_linux_arm64
+    打包: false
 
-archives:
-  - name_template: '{{ .Binary }}'
-    files: []
+archives: []
 
 release:
   github:
