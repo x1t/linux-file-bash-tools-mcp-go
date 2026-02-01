@@ -2,14 +2,14 @@ package tools
 
 import (
 	"bufio"
-	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -136,25 +136,25 @@ func cleanupCompletedProcesses() {
 	processMutex.Lock()
 	defer processMutex.Unlock()
 
-	completedPids := []int{}
-	for pid, processInfo := range backgroundProcesses {
+	completedIds := []string{}
+	for id, processInfo := range backgroundProcesses {
 		select {
 		case <-processInfo.Done:
 			// 进程已完成，标记为待删除
-			completedPids = append(completedPids, pid)
+			completedIds = append(completedIds, id)
 		default:
 			// 进程仍在运行
 		}
 	}
 
 	// 删除已完成的进程
-	for _, pid := range completedPids {
-		delete(backgroundProcesses, pid)
+	for _, id := range completedIds {
+		delete(backgroundProcesses, id)
 	}
 
-	if len(completedPids) > 0 {
+	if len(completedIds) > 0 {
 		// 记录清理信息（生产环境中可以记录日志）
-		_ = len(completedPids) // 避免未使用变量警告
+		_ = len(completedIds) // 避免未使用变量警告
 	}
 }
 
@@ -209,7 +209,7 @@ func (pi *ProcessInfo) getStatus() string {
 
 // 全局变量来跟踪后台进程
 var (
-	backgroundProcesses = make(map[int]*ProcessInfo)
+	backgroundProcesses = make(map[string]*ProcessInfo)
 	processMutex        sync.Mutex
 	// ANSI转义序列正则表达式（ESC字符 + [ + 数字/分号 + m）
 	ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -233,6 +233,17 @@ func parseBool(value interface{}) bool {
 	default:
 		return false
 	}
+}
+
+// generateUUID 生成一个简单的UUID
+func generateUUID() string {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		// Fallback if random fails
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 // AddBashTools 注册所有bash工具
@@ -267,11 +278,11 @@ func StopBashTools() {
 	processMutex.Lock()
 	defer processMutex.Unlock()
 
-	for pid, processInfo := range backgroundProcesses {
+	for id, processInfo := range backgroundProcesses {
 		if processInfo.Cmd.Process != nil {
 			processInfo.Cmd.Process.Kill()
 		}
-		delete(backgroundProcesses, pid)
+		delete(backgroundProcesses, id)
 	}
 }
 
@@ -315,7 +326,7 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 		return nil, BashResult{}, fmt.Errorf("timeout parameter is required and must be between 1 and 600000 milliseconds")
 	}
 
-	// 设置超时时间（todo.md标准使用毫秒，最大600000毫秒=600秒）
+	// 设置超时时间
 	var timeout time.Duration
 	if params.Timeout > 600000 {
 		timeout = 600000 * time.Millisecond // 最大600秒
@@ -329,168 +340,155 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 	shell, args := getShellCommand(params.Command)
 	cmd := exec.Command(shell, args...)
 
-	// 检查是否后台执行
-	if params.RunInBackground {
-		// 创建管道来捕获输出
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			return nil, BashResult{}, fmt.Errorf("Failed to create stdout pipe: %w", err)
-		}
-
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			return nil, BashResult{}, fmt.Errorf("Failed to create stderr pipe: %w", err)
-		}
-
-		// 创建进程信息对象，使用带限制的缓冲区
-		processInfo := &ProcessInfo{
-			Cmd:       cmd,
-			Stdout:    NewLimitedBuffer(1024 * 100), // 100KB 限制
-			Stderr:    NewLimitedBuffer(1024 * 100), // 100KB 限制
-			StartTime: startTime,
-			Done:      make(chan struct{}),
-		}
-		processInfo.setStatus("running") // 初始化状态
-
-		// 启动命令
-		if err := cmd.Start(); err != nil {
-			return nil, BashResult{}, fmt.Errorf("Failed to start command: %w", err)
-		}
-
-		// 记录后台进程
-		processMutex.Lock()
-		backgroundProcesses[cmd.Process.Pid] = processInfo
-		processMutex.Unlock()
-
-		// 异步读取输出并缓存
-		go func() {
-			defer stdout.Close() // 确保管道被关闭
-			scanner := bufio.NewScanner(stdout)
-			for scanner.Scan() {
-				line := scanner.Text() + "\n"
-				processInfo.Stdout.Write([]byte(line))
-			}
-		}()
-
-		go func() {
-			defer stderr.Close() // 确保管道被关闭
-			scanner := bufio.NewScanner(stderr)
-			for scanner.Scan() {
-				line := scanner.Text() + "\n"
-				processInfo.Stderr.Write([]byte(line))
-			}
-		}()
-
-		// 异步等待进程结束或超时，完成后通知
-		go func() {
-			// 创建带超时的context
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
-			defer cancel()
-
-			done := make(chan error, 1)
-			go func() {
-				done <- cmd.Wait()
-			}()
-
-			select {
-			case err := <-done:
-				// 进程正常结束
-				if err != nil {
-					processInfo.setStatus("failed")
-				} else {
-					processInfo.setStatus("completed")
-				}
-			case <-ctx.Done():
-				// 超时，终止进程
-				if cmd.Process != nil {
-					cmd.Process.Kill()
-				}
-				processInfo.setStatus("failed") // 超时终止视为失败
-			}
-
-			// 进程结束后，将进程信息标记为完成
-			close(processInfo.Done)
-
-			// 从跟踪列表中删除进程，这个操作需要在锁的保护下完成
-			// 使用原子状态检查避免竞态条件
-			processMutex.Lock()
-			// 再次检查进程是否仍在映射中（可能已被其他操作删除）
-			if _, exists := backgroundProcesses[cmd.Process.Pid]; exists {
-				delete(backgroundProcesses, cmd.Process.Pid)
-			}
-			processMutex.Unlock()
-		}()
-
-		return nil, BashResult{
-			Output:   "",
-			ExitCode: -1,
-			Killed:   false,
-			ShellID:  fmt.Sprintf("%d", cmd.Process.Pid),
-		}, nil
+	// 统一使用管道捕获输出
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, BashResult{}, fmt.Errorf("Failed to create stdout pipe: %w", err)
 	}
 
-	// 同步执行
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, BashResult{}, fmt.Errorf("Failed to create stderr pipe: %w", err)
+	}
 
-	// 设置超时控制
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+	// 创建进程信息的UUID
+	shellID := generateUUID()
+
+	// 创建进程信息对象
+	processInfo := &ProcessInfo{
+		Cmd:       cmd,
+		Stdout:    NewLimitedBuffer(1024 * 100), // 100KB 限制
+		Stderr:    NewLimitedBuffer(1024 * 100), // 100KB 限制
+		StartTime: startTime,
+		Done:      make(chan struct{}),
+	}
+	processInfo.setStatus("running")
 
 	// 启动命令
 	if err := cmd.Start(); err != nil {
 		return nil, BashResult{}, fmt.Errorf("Failed to start command: %w", err)
 	}
 
-	done := make(chan error, 1)
+	// 立即注册到全局映射 (统一管理)
+	processMutex.Lock()
+	backgroundProcesses[shellID] = processInfo
+	processMutex.Unlock()
+
+	// 启动输出读取协程
 	go func() {
-		done <- cmd.Wait()
+		defer stdout.Close()
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text() + "\n"
+			processInfo.Stdout.Write([]byte(line))
+		}
 	}()
 
-	var err error
-	var killed bool
-	select {
-	case err = <-done:
-		// 命令正常完成
-	case <-ctx.Done():
-		// 超时，终止进程
-		if cmd.Process != nil {
-			cmd.Process.Kill()
+	go func() {
+		defer stderr.Close()
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			line := scanner.Text() + "\n"
+			processInfo.Stderr.Write([]byte(line))
 		}
-		err = fmt.Errorf("Command execution timed out")
-		killed = true
-	}
+	}()
 
-	// 清理ANSI转义序列
-	stdoutText := cleanANSI(stdout.String())
-	stderrText := cleanANSI(stderr.String())
-
-	// 合并stdout和stderr为单个output字段
-	output := stdoutText
-	if stderrText != "" {
-		if output != "" {
-			output += "\n" + stderrText
+	// 启动监管协程 (Supervisor)
+	// 负责等待进程结束、更新状态、清理映射
+	go func() {
+		err := cmd.Wait()
+		
+		// 更新状态
+		if err != nil {
+			processInfo.setStatus("failed")
 		} else {
-			output = stderrText
+			processInfo.setStatus("completed")
+		}
+
+		// 通知完成
+		close(processInfo.Done)
+
+		// 从映射中移除 (清理)
+		processMutex.Lock()
+		if _, exists := backgroundProcesses[shellID]; exists {
+			delete(backgroundProcesses, shellID)
+		}
+		processMutex.Unlock()
+	}()
+
+	// 根据模式处理等待逻辑
+	if params.RunInBackground {
+		// 模式 A: 明确后台运行
+		// 启动超时强制终止协程 (仅在显式后台模式下强制应用timeout作为最大运行时间)
+		go func() {
+			select {
+			case <-processInfo.Done:
+				// 正常结束
+			case <-time.After(timeout):
+				// 超时 -> 终止进程
+				if cmd.Process != nil {
+					cmd.Process.Kill()
+				}
+				processInfo.setStatus("failed")
+			}
+		}()
+
+		// 立即返回
+		return nil, BashResult{
+			Output:   "",
+			ExitCode: -1,
+			Killed:   false,
+			ShellID:  shellID,
+		}, nil
+
+	} else {
+		// 模式 B: 前台运行 (支持超时自动转后台)
+		select {
+		case <-processInfo.Done:
+			// 情况 1: 在超时前完成
+			
+			// 获取输出
+			stdoutText := cleanANSI(processInfo.Stdout.String())
+			stderrText := cleanANSI(processInfo.Stderr.String())
+			
+			output := stdoutText
+			if stderrText != "" {
+				if output != "" {
+					output += "\n" + stderrText
+				} else {
+					output = stderrText
+				}
+			}
+
+			// 获取退出码
+			exitCode := 0
+			if processInfo.Cmd.ProcessState != nil {
+				exitCode = processInfo.Cmd.ProcessState.ExitCode()
+			}
+
+			// (ProcessInfo 已由 Supervisor 从映射中移除)
+
+			return nil, BashResult{
+				Output:   output,
+				ExitCode: exitCode,
+				Killed:   false,
+				ShellID:  shellID, // 返回ID供参考
+			}, nil
+
+		case <-time.After(timeout):
+			// 情况 2: 超时 -> 自动转为后台任务
+			// 不终止进程，不启动超时杀手，让其继续运行
+			
+			msg := fmt.Sprintf("⏱️ Command exceeded timeout (%dms), automatically converted to background task.\n\n✅ Task ID: %s", params.Timeout, shellID)
+			
+			return nil, BashResult{
+				Output:   msg,
+				ExitCode: 0,
+				Killed:   false,
+				ShellID:  shellID,
+			}, nil
 		}
 	}
-
-	exitCode := 0
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			exitCode = exitError.ExitCode()
-		} else if killed {
-			exitCode = -1
-		}
-	}
-
-	return nil, BashResult{
-		Output:   output,
-		ExitCode: exitCode,
-		Killed:   killed,
-		ShellID:  "", // 同步执行没有shell ID
-	}, nil
 }
 
 // bashOutputHandler 处理获取后台进程输出 (完全符合todo.md标准)
@@ -500,15 +498,9 @@ func bashOutputHandler(ctx context.Context, req *mcp.CallToolRequest, params Bas
 		return nil, BashOutputResult{}, fmt.Errorf("bash_id parameter is required")
 	}
 
-	// 从bash_id解析PID
-	pid, err := strconv.Atoi(params.BashID)
-	if err != nil {
-		return nil, BashOutputResult{}, fmt.Errorf("Invalid bash_id format: %s", params.BashID)
-	}
-
 	// 获取进程信息，使用锁保护
 	processMutex.Lock()
-	processInfo, exists := backgroundProcesses[pid]
+	processInfo, exists := backgroundProcesses[params.BashID]
 	if !exists {
 		processMutex.Unlock()
 		return nil, BashOutputResult{}, fmt.Errorf("Background process with bash_id %s not found", params.BashID)
@@ -587,14 +579,8 @@ func killShellHandler(ctx context.Context, req *mcp.CallToolRequest, params Kill
 		return nil, KillShellResult{}, fmt.Errorf("shell_id parameter is required")
 	}
 
-	// 从shell_id解析PID
-	pid, err := strconv.Atoi(params.ShellID)
-	if err != nil {
-		return nil, KillShellResult{}, fmt.Errorf("Invalid shell_id format: %s", params.ShellID)
-	}
-
 	processMutex.Lock()
-	processInfo, exists := backgroundProcesses[pid]
+	processInfo, exists := backgroundProcesses[params.ShellID]
 	if !exists {
 		processMutex.Unlock()
 		return nil, KillShellResult{}, fmt.Errorf("Background process with shell_id %s not found", params.ShellID)
@@ -632,7 +618,7 @@ func killShellHandler(ctx context.Context, req *mcp.CallToolRequest, params Kill
 	}
 
 	// 从跟踪列表中删除，如果进程还未结束则会由goroutine处理
-	delete(backgroundProcesses, pid)
+	delete(backgroundProcesses, params.ShellID)
 	processMutex.Unlock()
 
 	// 如果有终止错误，返回错误信息

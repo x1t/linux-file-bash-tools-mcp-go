@@ -142,3 +142,6 @@ tokens.json
 # System information files
 .system/
 .system_info
+
+# MCP Client dependencies
+mcp-client/node_modules/
