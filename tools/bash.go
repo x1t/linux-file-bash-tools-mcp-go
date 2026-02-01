@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -340,6 +341,11 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 	shell, args := getShellCommand(params.Command)
 	cmd := exec.Command(shell, args...)
 
+	// Configure process group for correct cleanup (Non-Windows)
+	if runtime.GOOS != "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+
 	// 统一使用管道捕获输出
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -594,10 +600,24 @@ func killShellHandler(ctx context.Context, req *mcp.CallToolRequest, params Kill
 
 	// 尝试终止进程 (先尝试优雅终止，失败则强制终止)
 	var killErr error
-	if err := processInfo.Cmd.Process.Signal(os.Interrupt); err != nil {
-		// 如果中断信号失败，强制终止
-		if err := processInfo.Cmd.Process.Kill(); err != nil {
-			killErr = err
+	pid := processInfo.Cmd.Process.Pid
+
+	if runtime.GOOS != "windows" {
+		// Linux/Unix: Kill process group
+		// Try SIGTERM first
+		if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
+			// If SIGTERM fails, try direct Kill (SIGKILL) on group
+			if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+				killErr = err
+			}
+		}
+	} else {
+		// Windows: Standard process kill
+		if err := processInfo.Cmd.Process.Signal(os.Interrupt); err != nil {
+			// 如果中断信号失败，强制终止
+			if err := processInfo.Cmd.Process.Kill(); err != nil {
+				killErr = err
+			}
 		}
 	}
 
@@ -613,7 +633,11 @@ func killShellHandler(ctx context.Context, req *mcp.CallToolRequest, params Kill
 	case <-time.After(5 * time.Second):
 		// 超时，强制终止进程
 		if processInfo.Cmd.Process != nil {
-			_ = processInfo.Cmd.Process.Kill()
+			if runtime.GOOS != "windows" {
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
+			} else {
+				_ = processInfo.Cmd.Process.Kill()
+			}
 		}
 	}
 
