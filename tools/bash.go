@@ -152,11 +152,6 @@ func cleanupCompletedProcesses() {
 	for _, id := range completedIds {
 		delete(backgroundProcesses, id)
 	}
-
-	if len(completedIds) > 0 {
-		// 记录清理信息（生产环境中可以记录日志）
-		_ = len(completedIds) // 避免未使用变量警告
-	}
 }
 
 // startCleanupRoutine 启动定期清理协程
@@ -281,7 +276,11 @@ func StopBashTools() {
 
 	for id, processInfo := range backgroundProcesses {
 		if processInfo.Cmd.Process != nil {
-			processInfo.Cmd.Process.Kill()
+			if runtime.GOOS != "windows" {
+				_ = syscall.Kill(-processInfo.Cmd.Process.Pid, syscall.SIGKILL)
+			} else {
+				_ = processInfo.Cmd.Process.Kill()
+			}
 		}
 		delete(backgroundProcesses, id)
 	}
@@ -327,13 +326,8 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 		return nil, BashResult{}, fmt.Errorf("timeout parameter is required and must be between 1 and 600000 milliseconds")
 	}
 
-	// 设置超时时间
-	var timeout time.Duration
-	if params.Timeout > 600000 {
-		timeout = 600000 * time.Millisecond // 最大600秒
-	} else {
-		timeout = time.Duration(params.Timeout) * time.Millisecond
-	}
+	// 设置超时时间（已在上面校验为 1~600000ms 的有效值）
+	timeout := time.Duration(params.Timeout) * time.Millisecond
 
 	startTime := time.Now()
 
@@ -431,9 +425,13 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 			case <-processInfo.Done:
 				// 正常结束
 			case <-time.After(timeout):
-				// 超时 -> 终止进程
+				// 超时 -> 终止整个进程组，防止子进程泄漏
 				if cmd.Process != nil {
-					cmd.Process.Kill()
+					if runtime.GOOS != "windows" {
+						_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+					} else {
+						_ = cmd.Process.Kill()
+					}
 				}
 				processInfo.setStatus("failed")
 			}
@@ -546,6 +544,11 @@ func bashOutputHandler(ctx context.Context, req *mcp.CallToolRequest, params Bas
 
 	// 如果状态不是running，说明进程已经结束
 	if status != "running" {
+		// 等待 supervisor 完成 Wait，确保 ProcessState 已写入（带兜底超时，避免数据竞态）
+		select {
+		case <-processInfo.Done:
+		case <-time.After(2 * time.Second):
+		}
 		// 进程已经结束，获取退出码
 		if processInfo.Cmd.ProcessState != nil {
 			exitCode = processInfo.Cmd.ProcessState.ExitCode()
@@ -621,23 +624,23 @@ func killShellHandler(ctx context.Context, req *mcp.CallToolRequest, params Kill
 		}
 	}
 
-	// 等待进程结束，但不阻塞太久
-	done := make(chan error, 1)
-	go func() {
-		done <- processInfo.Cmd.Wait()
-	}()
-
+	// 等待进程结束（supervisor 协程负责调用 Wait 并关闭 Done，这里不重复 Wait）
 	select {
-	case <-done:
+	case <-processInfo.Done:
 		// 进程已终止
 	case <-time.After(5 * time.Second):
-		// 超时，强制终止进程
+		// 超时，强制终止整个进程组
 		if processInfo.Cmd.Process != nil {
 			if runtime.GOOS != "windows" {
 				_ = syscall.Kill(-pid, syscall.SIGKILL)
 			} else {
 				_ = processInfo.Cmd.Process.Kill()
 			}
+		}
+		// 等待进程真正退出（supervisor 会关闭 Done）
+		select {
+		case <-processInfo.Done:
+		case <-time.After(2 * time.Second):
 		}
 	}
 

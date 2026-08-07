@@ -103,7 +103,7 @@ func handler(ctx context.Context, req *mcp.CallToolRequest, params XxxParams)
 
 ### Dependencies
 
-- `github.com/modelcontextprotocol/go-sdk v1.1.0` - MCP protocol
+- `github.com/modelcontextprotocol/go-sdk v1.7.0` - MCP protocol
 - `github.com/bmatcuk/doublestar/v4 v4.9.1` - Glob patterns
 - `github.com/stretchr/testify v1.11.1` - Testing framework
 

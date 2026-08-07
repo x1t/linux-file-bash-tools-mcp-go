@@ -95,10 +95,9 @@ func TestBashBackgroundCommand(t *testing.T) {
 	shellID := result.ShellID
 	t.Logf("Background process started with ID: %s", shellID)
 
-	// 验证ShellID是有效的数字字符串
-	pid, err := strconv.Atoi(shellID)
-	assert.NoError(t, err, "ShellID should be a valid integer string")
-	assert.True(t, pid > 0, "PID should be positive")
+	// 验证ShellID是UUID格式（32位十六进制字符串）
+	assert.Len(t, shellID, 32, "ShellID should be a 32-char UUID")
+	assert.Regexp(t, `^[0-9a-f]{32}$`, shellID, "ShellID should be a lowercase hex UUID")
 
 	// 清理进程
 	killParams := KillShellParams{
@@ -158,13 +157,17 @@ func TestBashTimeoutCommand(t *testing.T) {
 
 	_, result, err := bashHandler(context.Background(), req, params)
 
-	// 超时是正常的，命令会被终止
+	// 超时时命令自动转为后台任务继续运行，不会被终止
 	assert.NoError(t, err, "bashHandler should not return error")
 	assert.NotNil(t, result, "BashResult should not be nil")
-	assert.True(t, result.Killed, "Command should be killed due to timeout")
-	assert.NotEqual(t, 0, result.ExitCode, "Exit code should be non-zero for killed process")
+	assert.False(t, result.Killed, "Command should auto-convert to background, not killed")
+	assert.NotEmpty(t, result.ShellID, "Should return a background shell ID")
+	assert.Contains(t, result.Output, "automatically converted to background", "Output should mention auto-background conversion")
 
-	t.Logf("Timeout test - Killed: %v, Exit code: %d", result.Killed, result.ExitCode)
+	// 清理转为后台的进程，避免测试间副作用
+	_, _, _ = killShellHandler(context.Background(), req, KillShellParams{ShellID: result.ShellID})
+
+	t.Logf("Timeout test - Killed: %v, ShellID: %s", result.Killed, result.ShellID)
 }
 
 // TestKillShellSuccess 测试终止进程
@@ -312,7 +315,7 @@ func cleanupBackgroundProcesses() {
 		}
 	}
 	// 清空映射
-	backgroundProcesses = make(map[int]*ProcessInfo)
+	backgroundProcesses = make(map[string]*ProcessInfo)
 }
 
 // TestNewLimitedBuffer 测试创建带限制的缓冲区
@@ -531,7 +534,7 @@ func TestKillShellWithInterrupt(t *testing.T) {
 	// 验证进程已被终止
 	time.Sleep(200 * time.Millisecond)
 	processMutex.Lock()
-	_, exists := backgroundProcesses[func() int { pid, _ := strconv.Atoi(result.ShellID); return pid }()]
+	_, exists := backgroundProcesses[result.ShellID]
 	processMutex.Unlock()
 	assert.False(t, exists, "Process should be removed from tracking")
 
@@ -702,7 +705,7 @@ func TestKillShellWithForceKill(t *testing.T) {
 	// 验证进程已被终止
 	time.Sleep(200 * time.Millisecond)
 	processMutex.Lock()
-	_, exists := backgroundProcesses[func() int { pid, _ := strconv.Atoi(result.ShellID); return pid }()]
+	_, exists := backgroundProcesses[result.ShellID]
 	processMutex.Unlock()
 	assert.False(t, exists, "Process should be removed from tracking")
 

@@ -11,9 +11,6 @@ mcp-server-linux
 mcp-server-linux-arm64
 mcp-server-current
 
-# Go module cache
-go.sum
-
 # 构建输出目录
 # Build output directories
 dist/

@@ -161,7 +161,7 @@ func TestEditFileHandlerEmptyOldString(t *testing.T) {
 	_, result, err := editFileHandler(context.Background(), req, params)
 
 	assert.Error(t, err, "Should return error for empty old_string")
-	assert.Contains(t, err.Error(), "old_string and new_string parameters are required", "Error message should indicate required parameter")
+	assert.Contains(t, err.Error(), "old_string parameter is required", "Error message should indicate required parameter")
 	assert.Equal(t, EditResult{}, result, "Should return empty result on error")
 }
 
@@ -183,7 +183,7 @@ func TestEditFileHandlerEmptyNewString(t *testing.T) {
 	_, result, err := editFileHandler(context.Background(), req, params)
 
 	assert.Error(t, err, "Should return error for empty new_string")
-	assert.Contains(t, err.Error(), "old_string and new_string parameters are required", "Error message should indicate required parameter")
+	assert.Contains(t, err.Error(), "new_string parameter is required", "Error message should indicate required parameter")
 	assert.Equal(t, EditResult{}, result, "Should return empty result on error")
 }
 
@@ -221,7 +221,7 @@ func TestEditFileHandlerNonExistentFile(t *testing.T) {
 	_, result, err := editFileHandler(context.Background(), req, params)
 
 	assert.Error(t, err, "Should return error for non-existent file")
-	assert.Contains(t, err.Error(), "Failed to read file", "Error message should indicate file read failure")
+	assert.Contains(t, err.Error(), "文件不存在", "Error message should indicate file not found")
 	assert.Equal(t, EditResult{}, result, "Should return empty result on error")
 }
 

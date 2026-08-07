@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -272,6 +271,11 @@ func writeFileHandler(ctx context.Context, req *mcp.CallToolRequest, params Writ
 	// 验证必需参数
 	if params.FilePath == "" {
 		return nil, WriteResult{}, fmt.Errorf("file_path parameter is required")
+	}
+
+	// 验证文件路径是绝对路径（与read_file一致，符合todo.md规范）
+	if !filepath.IsAbs(params.FilePath) {
+		return nil, WriteResult{}, fmt.Errorf("file_path must be an absolute path")
 	}
 
 	if params.Content == "" {
@@ -581,7 +585,7 @@ func grepHandler(ctx context.Context, req *mcp.CallToolRequest, params GrepParam
 	}
 
 	// 从参数中获取文件路径
-	filePath := getFilePath(params.FilePath)
+	filePath := params.FilePath
 
 	if filePath != "" {
 		// 在单个文件中搜索
@@ -748,11 +752,6 @@ func truncateByTokens(items []string) ([]string, bool) {
 	return truncated, true
 }
 
-// getFilePath 从参数中获取文件路径
-func getFilePath(filePath string) string {
-	return filePath
-}
-
 // getSearchPath 从参数中获取搜索路径
 func getSearchPath(path ...string) string {
 	for _, p := range path {
@@ -763,73 +762,6 @@ func getSearchPath(path ...string) string {
 	return ""
 }
 
-// parseRange 解析范围字符串，格式：start:end
-func parseRange(r string, totalLines int) (int, int, error) {
-	parts := strings.Split(r, ":")
-	if len(parts) != 2 {
-		return 0, 0, fmt.Errorf("范围格式错误，期望: start:end")
-	}
-
-	start := 0
-	end := totalLines
-
-	// 解析start
-	if parts[0] != "" {
-		var err error
-		start, err = parseLineNumber(parts[0], totalLines)
-		if err != nil {
-			return 0, 0, err
-		}
-	}
-
-	// 解析end（注意：需要加1因为切片是半开区间[ start, end )）
-	if parts[1] != "" {
-		var err error
-		end, err = parseLineNumber(parts[1], totalLines)
-		if err != nil {
-			return 0, 0, err
-		}
-		// end需要加1，因为parseLineNumber将其转换为0基，但切片是[ start, end ) 半开区间
-		end = end + 1
-	}
-
-	// 确保范围有效
-	if start < 0 {
-		start = 0
-	}
-	if end > totalLines {
-		end = totalLines
-	}
-	if start > end {
-		start, end = end, start
-	}
-
-	return start, end, nil
-}
-
-// parseLineNumber 解析行号
-func parseLineNumber(s string, totalLines int) (int, error) {
-	// 支持相对行号（从末尾计算）
-	if strings.HasPrefix(s, "-") {
-		relative, err := parseLineNumber(strings.TrimPrefix(s, "-"), totalLines)
-		if err != nil {
-			return 0, err
-		}
-		return totalLines - relative, nil
-	}
-
-	line, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, fmt.Errorf("无效的行号: %s", s)
-	}
-
-	// 转换为0基索引，end值需要加1因为切片是[start, end)的半开区间
-	if line > 0 {
-		return line - 1, nil
-	}
-
-	return line, nil
-}
 
 // resolvePath 解析文件路径
 func resolvePath(filePath, basePath string) (string, error) {
