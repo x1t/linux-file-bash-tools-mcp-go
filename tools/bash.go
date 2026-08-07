@@ -394,10 +394,11 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 	}()
 
 	// 启动监管协程 (Supervisor)
-	// 负责等待进程结束、更新状态、清理映射
+	// 负责等待进程结束、更新状态、通知完成；
+	// 已完成进程保留在映射中供 bash_output 查询最终状态/输出，由定期清理协程移除
 	go func() {
 		err := cmd.Wait()
-		
+
 		// 更新状态
 		if err != nil {
 			processInfo.setStatus("failed")
@@ -407,13 +408,6 @@ func bashHandler(ctx context.Context, req *mcp.CallToolRequest, params BashParam
 
 		// 通知完成
 		close(processInfo.Done)
-
-		// 从映射中移除 (清理)
-		processMutex.Lock()
-		if _, exists := backgroundProcesses[shellID]; exists {
-			delete(backgroundProcesses, shellID)
-		}
-		processMutex.Unlock()
 	}()
 
 	// 根据模式处理等待逻辑

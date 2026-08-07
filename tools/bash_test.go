@@ -485,15 +485,13 @@ func TestBashOutputCompletedProcess(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// 再次获取输出，检查进程状态
+	// 修复后：已完成进程保留在映射中，bash_output 应可靠返回 completed 状态与最终输出
 	_, outputResult2, err2 := bashOutputHandler(context.Background(), outputReq, outputParams)
-	// 进程完成后可能会被删除，所以可能有"not found"错误
-	if err2 != nil {
-		assert.Contains(t, err2.Error(), "not found", "Process should be removed after completion")
-	} else {
-		// 如果进程信息还在，检查状态
-		assert.Contains(t, outputResult2.Status, "completed", "Process should be completed")
-		assert.Contains(t, outputResult2.Output, "Task completed", "Output should contain result")
-	}
+	assert.NoError(t, err2, "bashOutputHandler should not return error for completed process")
+	assert.NotNil(t, outputResult2, "BashOutputResult should not be nil")
+	assert.Equal(t, "completed", outputResult2.Status, "Process should be completed")
+	assert.Equal(t, 0, outputResult2.ExitCode, "Exit code should be 0 for success")
+	assert.Contains(t, outputResult2.Output, "Task completed", "Output should contain result")
 
 	// 清理
 	cleanupBackgroundProcesses()
